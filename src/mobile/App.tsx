@@ -17,15 +17,23 @@ import * as Location from 'expo-location';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 
 const DEFAULT_ENDPOINT =
+<<<<<<< HEAD
   'https://u90us4gdu6.execute-api.eu-central-1.amazonaws.com/telemetry';
 const SAMPLE_RATE_HZ = 20;
 const SAMPLE_INTERVAL_MS = 50; // 20 Hz
 const BATCH_SAMPLES = 40; // 2 seconds at 20 Hz
+=======
+    'https://u90us4gdu6.execute-api.eu-central-1.amazonaws.com/telemetry';
+const SAMPLE_INTERVAL_MS = 50; // ~20 Hz
+>>>>>>> origin/teo
 const FLUSH_INTERVAL_MS = 2000; // 2 seconds
 const UI_REFRESH_INTERVAL_MS = 200; // 5 Hz UI readout update
 const REQUEST_TIMEOUT_MS = 8000;
 const GRAVITY_MS2 = 9.81;
 const MAX_RETRY_QUEUE = 20;
+// At 20 Hz, 200 samples retain up to 10 seconds per sensor if uploads stall.
+const MAX_BUFFERED_SAMPLES = 200;
+const REQUEST_TIMEOUT_MS = 10000;
 const KEEP_AWAKE_TAG = 'sensor-telemetry-stream';
 
 interface SensorSample {
@@ -64,6 +72,8 @@ interface TelemetryPayloadV1 {
   accelerometer: ColumnarSeries;
   gyroscope: ColumnarSeries | null;
 }
+
+
 
 interface SubscriptionHandle {
   remove: () => void;
@@ -137,6 +147,8 @@ export default function App() {
   const latestLocationRef = useRef<LocationReading | null>(null);
   const retryQueueRef = useRef<TelemetryPayloadV1[]>([]);
   const isFlushingRef = useRef<boolean>(false);
+  const isStartingRef = useRef<boolean>(false);
+  const isStreamingRef = useRef<boolean>(false);
 
   // Active subscriptions & timers
   const accelSubRef = useRef<SubscriptionHandle | null>(null);
@@ -150,20 +162,38 @@ export default function App() {
   }, [deviceId]);
 
   useEffect(() => {
+    const timer = setInterval(() => {
+      const memory = (globalThis as any).performance?.memory;
+
+      if (memory) {
+        console.log(
+            `[MEMORY] Used: ${(memory.usedJSHeapSize / 1024 / 1024).toFixed(2)} MB`,
+            `Total: ${(memory.totalJSHeapSize / 1024 / 1024).toFixed(2)} MB`
+        );
+      } else {
+        console.log('[MEMORY] JS heap statistics unavailable');
+      }
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     endpointRef.current = endpoint;
   }, [endpoint]);
 
   const enqueueForRetry = useCallback((batches: TelemetryPayloadV1[]) => {
     const combined = [...batches, ...retryQueueRef.current];
     const trimmed =
-      combined.length > MAX_RETRY_QUEUE
-        ? combined.slice(combined.length - MAX_RETRY_QUEUE)
-        : combined;
+        combined.length > MAX_RETRY_QUEUE
+            ? combined.slice(combined.length - MAX_RETRY_QUEUE)
+            : combined;
     retryQueueRef.current = trimmed;
     setRetryQueueSize(trimmed.length);
   }, []);
 
   const postBatch = useCallback(
+<<<<<<< HEAD
     async (url: string, payload: TelemetryPayloadV1): Promise<void> => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -177,10 +207,37 @@ export default function App() {
           body: JSON.stringify(payload),
           signal: controller.signal,
         });
+=======
+      async (url: string, payload: TelemetryPayload): Promise<void> => {
+        // A stalled request must not hold the flush lock forever. If that happened,
+        // sensor callbacks would continue appending to the buffers indefinitely.
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+        let response: Response;
+        try {
+          response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+        } catch (err) {
+          if (controller.signal.aborted) {
+            throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+          }
+          throw err;
+        } finally {
+          clearTimeout(timeout);
+        }
+>>>>>>> origin/teo
 
         if (!response.ok) {
           const bodyText = await response.text().catch(() => '');
           const detail = bodyText ? `: ${bodyText.slice(0, 120)}` : '';
+<<<<<<< HEAD
           throw new HttpStatusError(response.status, `HTTP ${response.status}${detail}`);
         }
       } finally {
@@ -188,6 +245,12 @@ export default function App() {
       }
     },
     []
+=======
+          throw new Error(`HTTP ${response.status}${detail}`);
+        }
+      },
+      []
+>>>>>>> origin/teo
   );
 
   const buildPayloadFromBuffers = useCallback((): TelemetryPayloadV1 | null => {
@@ -235,12 +298,43 @@ export default function App() {
     const pendingBatches: TelemetryPayloadV1[] = [...retryQueueRef.current];
     retryQueueRef.current = [];
 
+<<<<<<< HEAD
     // Drain any complete 40-sample batches (2 seconds at 20 Hz)
     while (accelBufferRef.current.length >= BATCH_SAMPLES) {
       const nextPayload = buildPayloadFromBuffers();
       if (nextPayload) {
         pendingBatches.push(nextPayload);
       }
+=======
+    if (accelBatch.length > 0 || gyroBatch.length > 0) {
+      const lastAccelSample = accelBatch[accelBatch.length - 1];
+      const magnitude = lastAccelSample
+          ? roundTo(
+              Math.sqrt(
+                  lastAccelSample.x * lastAccelSample.x +
+                  lastAccelSample.y * lastAccelSample.y +
+                  lastAccelSample.z * lastAccelSample.z
+              ),
+              2
+          )
+          : 0;
+
+      const newPayload: TelemetryPayload = {
+        device_id: deviceIdRef.current.trim() || 'unknown-device',
+        event_type: 'raw_sensor_batch',
+        timestamp: new Date().toISOString(),
+        value: magnitude,
+        unit: 'm/s^2',
+        metadata: {
+          platform: Platform.OS,
+          location: latestLocationRef.current,
+          accelerometer: accelBatch,
+          gyroscope: gyroBatch,
+        },
+      };
+
+      pendingBatches.push(newPayload);
+>>>>>>> origin/teo
     }
 
     if (pendingBatches.length === 0) {
@@ -249,9 +343,9 @@ export default function App() {
     }
 
     const boundedBatches =
-      pendingBatches.length > MAX_RETRY_QUEUE
-        ? pendingBatches.slice(pendingBatches.length - MAX_RETRY_QUEUE)
-        : pendingBatches;
+        pendingBatches.length > MAX_RETRY_QUEUE
+            ? pendingBatches.slice(pendingBatches.length - MAX_RETRY_QUEUE)
+            : pendingBatches;
 
     const targetUrl = endpointRef.current.trim();
     if (!targetUrl) {
@@ -309,6 +403,8 @@ export default function App() {
   }, [buildPayloadFromBuffers, enqueueForRetry, postBatch]);
 
   const stopStreaming = useCallback(async () => {
+    isStreamingRef.current = false;
+
     if (flushTimerRef.current) {
       clearInterval(flushTimerRef.current);
       flushTimerRef.current = null;
@@ -342,68 +438,153 @@ export default function App() {
   }, []);
 
   const startStreaming = useCallback(async () => {
-    setErrorMessage(null);
-
-    if (!endpointRef.current.trim()) {
-      setErrorMessage('Please enter a valid API Endpoint URL before starting.');
+    // React state updates are asynchronous. A ref prevents rapid taps from
+    // creating multiple sensor subscriptions and timers.
+    if (isStartingRef.current || isStreamingRef.current) {
       return;
     }
+    isStartingRef.current = true;
 
     try {
-      await activateKeepAwakeAsync(KEEP_AWAKE_TAG);
-    } catch {
-      // Non-fatal on unsupported environments
-    }
+      setErrorMessage(null);
 
-    // Request foreground GPS permissions
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setErrorMessage(
-          'Foreground location permission denied. Streaming sensors without GPS coordinates.'
-        );
-      } else {
-        try {
-          const lastKnown = await Location.getLastKnownPositionAsync();
-          if (lastKnown) {
-            const reading: LocationReading = {
-              lat: roundTo(lastKnown.coords.latitude, 6),
-              lon: roundTo(lastKnown.coords.longitude, 6),
-              accuracy:
-                lastKnown.coords.accuracy !== null
-                  ? roundTo(lastKnown.coords.accuracy, 2)
-                  : null,
-            };
-            latestLocationRef.current = reading;
-            setLatestLocation(reading);
-          }
-        } catch {
-          // Wait for live watchPosition updates
-        }
-
-        locationSubRef.current = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.Balanced,
-            timeInterval: 2000,
-            distanceInterval: 1,
-          },
-          (loc) => {
-            const reading: LocationReading = {
-              lat: roundTo(loc.coords.latitude, 6),
-              lon: roundTo(loc.coords.longitude, 6),
-              accuracy:
-                loc.coords.accuracy !== null
-                  ? roundTo(loc.coords.accuracy, 2)
-                  : null,
-            };
-            latestLocationRef.current = reading;
-          }
-        );
+      if (!endpointRef.current.trim()) {
+        setErrorMessage('Please enter a valid API Endpoint URL before starting.');
+        return;
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unable to access GPS';
-      setErrorMessage(`Location error: ${msg}`);
+
+      try {
+        await activateKeepAwakeAsync(KEEP_AWAKE_TAG);
+      } catch {
+        // Non-fatal on unsupported environments
+      }
+
+      // Request foreground GPS permissions
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setErrorMessage(
+              'Foreground location permission denied. Streaming sensors without GPS coordinates.'
+          );
+        } else {
+          try {
+            const lastKnown = await Location.getLastKnownPositionAsync();
+            if (lastKnown) {
+              const reading: LocationReading = {
+                lat: roundTo(lastKnown.coords.latitude, 6),
+                lon: roundTo(lastKnown.coords.longitude, 6),
+                accuracy:
+                    lastKnown.coords.accuracy !== null
+                        ? roundTo(lastKnown.coords.accuracy, 2)
+                        : null,
+              };
+              latestLocationRef.current = reading;
+              setLatestLocation(reading);
+            }
+          } catch {
+            // Wait for live watchPosition updates
+          }
+
+          locationSubRef.current = await Location.watchPositionAsync(
+              {
+                accuracy: Location.Accuracy.Balanced,
+                timeInterval: 2000,
+                distanceInterval: 1,
+              },
+              (loc) => {
+                const reading: LocationReading = {
+                  lat: roundTo(loc.coords.latitude, 6),
+                  lon: roundTo(loc.coords.longitude, 6),
+                  accuracy:
+                      loc.coords.accuracy !== null
+                          ? roundTo(loc.coords.accuracy, 2)
+                          : null,
+                };
+                latestLocationRef.current = reading;
+              }
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unable to access GPS';
+        setErrorMessage(`Location error: ${msg}`);
+      }
+
+      // Start Accelerometer (~20 Hz, converted from G-force to m/s^2)
+      try {
+        const accelAvailable = await Accelerometer.isAvailableAsync();
+        if (accelAvailable) {
+          Accelerometer.setUpdateInterval(SAMPLE_INTERVAL_MS);
+          accelSubRef.current = Accelerometer.addListener((data) => {
+            const sample: SensorSample = {
+              t: Date.now(),
+              x: roundTo(data.x * GRAVITY_MS2, 4),
+              y: roundTo(data.y * GRAVITY_MS2, 4),
+              z: roundTo(data.z * GRAVITY_MS2, 4),
+            };
+            latestAccelRef.current = sample;
+            if (accelBufferRef.current.length >= MAX_BUFFERED_SAMPLES) {
+              accelBufferRef.current.shift();
+            }
+            accelBufferRef.current.push(sample);
+          });
+        } else {
+          setErrorMessage('Accelerometer is not available on this device.');
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Accelerometer error';
+        setErrorMessage(`Accelerometer error: ${msg}`);
+      }
+
+      // Start Gyroscope (~20 Hz)
+      try {
+        const gyroAvailable = await Gyroscope.isAvailableAsync();
+        if (gyroAvailable) {
+          Gyroscope.setUpdateInterval(SAMPLE_INTERVAL_MS);
+          gyroSubRef.current = Gyroscope.addListener((data) => {
+            const sample: SensorSample = {
+              t: Date.now(),
+              x: roundTo(data.x, 4),
+              y: roundTo(data.y, 4),
+              z: roundTo(data.z, 4),
+            };
+            latestGyroRef.current = sample;
+            if (gyroBufferRef.current.length >= MAX_BUFFERED_SAMPLES) {
+              gyroBufferRef.current.shift();
+            }
+            gyroBufferRef.current.push(sample);
+          });
+        } else {
+          setErrorMessage((prev) => prev ?? 'Gyroscope is not available on this device.');
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Gyroscope error';
+        setErrorMessage((prev) => prev ?? `Gyroscope error: ${msg}`);
+      }
+
+      // Periodically refresh displayed telemetry without re-rendering at 20 Hz
+      uiTimerRef.current = setInterval(() => {
+        if (latestAccelRef.current) {
+          setLatestAccel(latestAccelRef.current);
+        }
+        if (latestGyroRef.current) {
+          setLatestGyro(latestGyroRef.current);
+        }
+        if (latestLocationRef.current) {
+          setLatestLocation(latestLocationRef.current);
+        }
+      }, UI_REFRESH_INTERVAL_MS);
+
+      // Flush batched readings every 2 seconds
+      flushTimerRef.current = setInterval(() => {
+        void flushTelemetry();
+      }, FLUSH_INTERVAL_MS);
+
+      isStreamingRef.current = true;
+      setIsStreaming(true);
+    } finally {
+      isStartingRef.current = false;
     }
+<<<<<<< HEAD
 
     // Start Accelerometer (20 Hz, converted from G-force to m/s^2)
     try {
@@ -473,6 +654,8 @@ export default function App() {
     }, FLUSH_INTERVAL_MS);
 
     setIsStreaming(true);
+=======
+>>>>>>> origin/teo
   }, [flushTelemetry]);
 
   useEffect(() => {
@@ -490,27 +673,24 @@ export default function App() {
   }, [isStreaming, startStreaming, stopStreaming]);
 
   const accelMagnitude = latestAccel
-    ? roundTo(
-        Math.sqrt(
-          latestAccel.x * latestAccel.x +
-            latestAccel.y * latestAccel.y +
-            latestAccel.z * latestAccel.z
-        ),
-        2
+      ? roundTo(
+          Math.sqrt(
+              latestAccel.x * latestAccel.x +
+              latestAccel.y * latestAccel.y +
+              latestAccel.z * latestAccel.z
+          ),
+          2
       ).toFixed(2)
-    : '--';
+      : '--';
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="light" />
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="light" />
+        <KeyboardAvoidingView
+            style={styles.flex}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
+<<<<<<< HEAD
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.title}>Sensor Telemetry Streamer</Text>
@@ -576,24 +756,22 @@ export default function App() {
               isStreaming ? styles.stopButton : styles.startButton,
               pressed && styles.actionButtonPressed,
             ]}
+=======
+          <ScrollView
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+>>>>>>> origin/teo
           >
-            <Text style={styles.actionButtonText}>
-              {isStreaming ? 'Stop Streaming' : 'Start Streaming'}
-            </Text>
-          </Pressable>
-
-          {/* Transmission Stats Card */}
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Transmission Status</Text>
-
-            <View style={styles.row}>
-              <Text style={styles.metricLabel}>Status</Text>
-              <Text
-                style={[
-                  styles.metricValue,
-                  isStreaming ? styles.textGreen : styles.textMuted,
-                ]}
+            {/* Header */}
+            <View style={styles.header}>
+              <Text style={styles.title}>Sensor Telemetry Streamer</Text>
+              <View
+                  style={[
+                    styles.statusBadge,
+                    isStreaming ? styles.statusBadgeActive : styles.statusBadgeIdle,
+                  ]}
               >
+<<<<<<< HEAD
                 {isStreaming ? 'Streaming (20 Hz / 40-sample batch)' : 'Stopped'}
               </Text>
             </View>
@@ -685,27 +863,194 @@ export default function App() {
                   {latestLocation?.accuracy != null
                     ? `±${latestLocation.accuracy}m`
                     : 'No fix'}
+=======
+                <View
+                    style={[
+                      styles.statusDot,
+                      isStreaming ? styles.statusDotActive : styles.statusDotIdle,
+                    ]}
+                />
+                <Text style={styles.statusBadgeText}>
+                  {isStreaming ? 'STREAMING' : 'IDLE'}
+>>>>>>> origin/teo
                 </Text>
               </View>
-              <View style={styles.axisRow}>
-                <View style={styles.axisBox}>
-                  <Text style={styles.axisLabel}>LAT</Text>
-                  <Text style={styles.axisValue}>
-                    {latestLocation ? latestLocation.lat.toFixed(5) : '--'}
+            </View>
+
+            {/* Error Banner */}
+            {errorMessage && (
+                <View style={styles.errorBanner}>
+                  <Text style={styles.errorTitle}>Warning / Error</Text>
+                  <Text style={styles.errorText}>{errorMessage}</Text>
+                </View>
+            )}
+
+            {/* Configuration Card */}
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Configuration</Text>
+
+              <Text style={styles.inputLabel}>Device ID</Text>
+              <TextInput
+                  style={styles.input}
+                  value={deviceId}
+                  onChangeText={setDeviceId}
+                  placeholder="e.g. ios-42"
+                  placeholderTextColor="#64748B"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+              />
+
+              <Text style={styles.inputLabel}>API Endpoint</Text>
+              <TextInput
+                  style={styles.input}
+                  value={endpoint}
+                  onChangeText={setEndpoint}
+                  placeholder="https://..."
+                  placeholderTextColor="#64748B"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+              />
+            </View>
+
+            {/* Primary Action Button */}
+            <Pressable
+                onPress={handleToggleStreaming}
+                style={({ pressed }) => [
+                  styles.actionButton,
+                  isStreaming ? styles.stopButton : styles.startButton,
+                  pressed && styles.actionButtonPressed,
+                ]}
+            >
+              <Text style={styles.actionButtonText}>
+                {isStreaming ? 'Stop Streaming' : 'Start Streaming'}
+              </Text>
+            </Pressable>
+
+            {/* Transmission Stats Card */}
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Transmission Status</Text>
+
+              <View style={styles.row}>
+                <Text style={styles.metricLabel}>Status</Text>
+                <Text
+                    style={[
+                      styles.metricValue,
+                      isStreaming ? styles.textGreen : styles.textMuted,
+                    ]}
+                >
+                  {isStreaming ? 'Streaming (20 Hz / 2s batch)' : 'Stopped'}
+                </Text>
+              </View>
+
+              <View style={styles.row}>
+                <Text style={styles.metricLabel}>Last Sent (UTC)</Text>
+                <Text style={styles.metricMono}>{lastSentUtc}</Text>
+              </View>
+
+              <View style={styles.row}>
+                <Text style={styles.metricLabel}>Batches Sent</Text>
+                <Text style={styles.metricValue}>{batchesSent}</Text>
+              </View>
+
+              <View style={[styles.row, styles.rowLast]}>
+                <Text style={styles.metricLabel}>Retry Queue</Text>
+                <Text
+                    style={[
+                      styles.metricValue,
+                      retryQueueSize > 0 ? styles.textAmber : styles.textPrimary,
+                    ]}
+                >
+                  {retryQueueSize} / {MAX_RETRY_QUEUE}
+                </Text>
+              </View>
+            </View>
+
+            {/* Live Sensor Readout Card */}
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Live Sensor Readout</Text>
+
+              <View style={styles.sensorBlock}>
+                <View style={styles.sensorHeader}>
+                  <Text style={styles.sensorName}>Accelerometer (m/s²)</Text>
+                  <Text style={styles.sensorMeta}>|a| = {accelMagnitude}</Text>
+                </View>
+                <View style={styles.axisRow}>
+                  <View style={styles.axisBox}>
+                    <Text style={styles.axisLabel}>X</Text>
+                    <Text style={styles.axisValue}>
+                      {formatAxis(latestAccel ? latestAccel.x : null)}
+                    </Text>
+                  </View>
+                  <View style={styles.axisBox}>
+                    <Text style={styles.axisLabel}>Y</Text>
+                    <Text style={styles.axisValue}>
+                      {formatAxis(latestAccel ? latestAccel.y : null)}
+                    </Text>
+                  </View>
+                  <View style={styles.axisBox}>
+                    <Text style={styles.axisLabel}>Z</Text>
+                    <Text style={styles.axisValue}>
+                      {formatAxis(latestAccel ? latestAccel.z : null)}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.sensorBlock}>
+                <View style={styles.sensorHeader}>
+                  <Text style={styles.sensorName}>Gyroscope (rad/s)</Text>
+                </View>
+                <View style={styles.axisRow}>
+                  <View style={styles.axisBox}>
+                    <Text style={styles.axisLabel}>X</Text>
+                    <Text style={styles.axisValue}>
+                      {formatAxis(latestGyro ? latestGyro.x : null)}
+                    </Text>
+                  </View>
+                  <View style={styles.axisBox}>
+                    <Text style={styles.axisLabel}>Y</Text>
+                    <Text style={styles.axisValue}>
+                      {formatAxis(latestGyro ? latestGyro.y : null)}
+                    </Text>
+                  </View>
+                  <View style={styles.axisBox}>
+                    <Text style={styles.axisLabel}>Z</Text>
+                    <Text style={styles.axisValue}>
+                      {formatAxis(latestGyro ? latestGyro.z : null)}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={[styles.sensorBlock, styles.sensorBlockLast]}>
+                <View style={styles.sensorHeader}>
+                  <Text style={styles.sensorName}>GPS Location</Text>
+                  <Text style={styles.sensorMeta}>
+                    {latestLocation?.accuracy != null
+                        ? `±${latestLocation.accuracy}m`
+                        : 'No fix'}
                   </Text>
                 </View>
-                <View style={styles.axisBox}>
-                  <Text style={styles.axisLabel}>LON</Text>
-                  <Text style={styles.axisValue}>
-                    {latestLocation ? latestLocation.lon.toFixed(5) : '--'}
-                  </Text>
+                <View style={styles.axisRow}>
+                  <View style={styles.axisBox}>
+                    <Text style={styles.axisLabel}>LAT</Text>
+                    <Text style={styles.axisValue}>
+                      {latestLocation ? latestLocation.lat.toFixed(5) : '--'}
+                    </Text>
+                  </View>
+                  <View style={styles.axisBox}>
+                    <Text style={styles.axisLabel}>LON</Text>
+                    <Text style={styles.axisValue}>
+                      {latestLocation ? latestLocation.lon.toFixed(5) : '--'}
+                    </Text>
+                  </View>
                 </View>
               </View>
             </View>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
   );
 }
 
