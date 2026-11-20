@@ -1,0 +1,21 @@
+.quake-list-date {
+  color: var(--ink-2);
+}
+
+.quake-list-live {
+  display: block;
+  font-weight: 700;
+  color: var(--alert);
+}
+
+.quake-list tr[data-active] td {
+  background: var(--alert-wash);
+}
+
+.quake-list tr[data-active] td:first-child {
+  box-shadow: inset 4px 0 0 var(--alert);
+}
+
+.quake-list-peak {
+  font-weight: 700;
+}

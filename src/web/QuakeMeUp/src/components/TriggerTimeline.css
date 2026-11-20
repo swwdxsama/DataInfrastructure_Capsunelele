@@ -1,0 +1,75 @@
+.timeline {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.timeline-day-title {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--ink-2);
+  padding-bottom: var(--space-2);
+}
+
+.timeline-list {
+  border-left: 2px solid var(--rule);
+  margin-left: 5px;
+}
+
+.timeline-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 5.5em minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) 0 var(--space-2) var(--space-4);
+}
+
+/* Marker on the rail: hollow for isolated triggers, filled for confirmed earthquakes. */
+.timeline-item::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 0.85em;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--rule-strong);
+}
+
+.timeline-item[data-confirmed]::before {
+  background: var(--alert);
+  border-color: var(--alert);
+}
+
+.timeline-time {
+  font-weight: 700;
+}
+
+.timeline-device {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+
+.timeline-device:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.timeline-kind {
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.timeline-item[data-confirmed] .timeline-kind {
+  color: var(--ink);
+}
+
+.timeline-value {
+  font-weight: 700;
+  white-space: nowrap;
+}

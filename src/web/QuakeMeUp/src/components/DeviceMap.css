@@ -1,0 +1,66 @@
+.device-map {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+}
+
+.device-map-canvas {
+  flex: 1;
+  min-height: 440px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--surface-sunk);
+  font-family: var(--font);
+}
+
+/* Muted base map so the sensors carry the color. */
+.device-map-canvas .leaflet-tile-pane {
+  filter: grayscale(1) contrast(0.92) brightness(1.04);
+}
+
+.device-map-canvas .leaflet-control-attribution {
+  font-size: 12px;
+}
+
+.device-map-tip {
+  font-family: var(--font);
+  font-size: var(--text-sm);
+  line-height: 1.35;
+  color: var(--ink);
+  border-radius: 3px;
+  border-color: var(--rule-strong);
+  box-shadow: none;
+}
+
+.device-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.device-map-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.device-map-legend-epi {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px dashed var(--alert);
+}
+
+.device-map-fallback {
+  flex: 1;
+  min-height: 440px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--surface-sunk);
+  color: var(--ink-2);
+}
