@@ -3,3 +3,6 @@ infrastructure/*.tfstate*
 infrastructure/ingest.zip
 .terraform.lock.hcl
 __pycache__/
+
+.claude/
+AGENTS.md
