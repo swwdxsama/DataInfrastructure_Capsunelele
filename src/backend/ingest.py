@@ -169,14 +169,27 @@ def _response(status_code, body):
     }
 
 
-EVENTS_PROJECTION = (
-    "device_id, #ts, t_ms, rms, pga, variance, dominant_freq_hz, "
-    "gyro_rms, is_stationary, sta_lta, is_trigger, lat, lon, warnings, #val"
+EVENTS_PROJECTION_FIELDS = (
+    "device_id",
+    "timestamp",
+    "t_ms",
+    "rms",
+    "pga",
+    "variance",
+    "dominant_freq_hz",
+    "gyro_rms",
+    "is_stationary",
+    "sta_lta",
+    "is_trigger",
+    "lat",
+    "lon",
+    "warnings",
+    "value",
 )
 EVENTS_ATTR_NAMES = {
-    "#ts": "timestamp",
-    "#val": "value",
+    f"#f{i}": name for i, name in enumerate(EVENTS_PROJECTION_FIELDS)
 }
+EVENTS_PROJECTION = ", ".join(EVENTS_ATTR_NAMES.keys())
 
 
 def _scan_table(table, max_items=None, max_pages=None, projection=None, attr_names=None):
