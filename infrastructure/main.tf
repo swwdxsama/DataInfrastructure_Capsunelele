@@ -116,6 +116,8 @@ resource "aws_lambda_function" "ingest" {
   role             = aws_iam_role.lambda_exec.arn
   handler          = "ingest.handler"
   runtime          = "python3.12"
+  timeout          = 15
+  memory_size      = 512
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
 

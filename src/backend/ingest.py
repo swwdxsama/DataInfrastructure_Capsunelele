@@ -169,17 +169,41 @@ def _response(status_code, body):
     }
 
 
-def _scan_all(table):
+EVENTS_PROJECTION = (
+    "device_id, #ts, t_ms, rms, pga, variance, dominant_freq_hz, "
+    "gyro_rms, is_stationary, sta_lta, is_trigger, lat, lon, warnings, #val"
+)
+EVENTS_ATTR_NAMES = {
+    "#ts": "timestamp",
+    "#val": "value",
+}
+
+
+def _scan_table(table, max_items=None, max_pages=None, projection=None, attr_names=None):
     items = []
     kwargs = {}
+    if projection:
+        kwargs["ProjectionExpression"] = projection
+    if attr_names:
+        kwargs["ExpressionAttributeNames"] = attr_names
+
+    pages = 0
     while True:
         resp = table.scan(**kwargs)
         items.extend(resp.get("Items", []))
+        pages += 1
+
+        if max_items is not None and len(items) >= max_items:
+            break
+        if max_pages is not None and pages >= max_pages:
+            break
+
         last_key = resp.get("LastEvaluatedKey")
         if not last_key:
             break
         kwargs["ExclusiveStartKey"] = last_key
-    return items
+
+    return items[:max_items] if max_items is not None else items
 
 
 def _fetch_device_history(device_id, t0_ms, lookback_sec):
@@ -275,13 +299,19 @@ def _handle_post_telemetry(event):
 
 
 def _handle_get_events():
-    items = _scan_all(events_table)
+    items = _scan_table(
+        events_table,
+        max_items=500,
+        max_pages=3,
+        projection=EVENTS_PROJECTION,
+        attr_names=EVENTS_ATTR_NAMES,
+    )
     items.sort(key=lambda x: str(x.get("timestamp", "")), reverse=True)
     return _response(200, {"events": items[:50]})
 
 
 def _handle_get_alerts():
-    items = _scan_all(alerts_table)
+    items = _scan_table(alerts_table)
     items.sort(key=lambda x: str(x.get("timestamp", "")), reverse=True)
     return _response(200, {"alerts": items[:20]})
 
