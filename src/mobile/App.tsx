@@ -18,9 +18,12 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 
 const DEFAULT_ENDPOINT =
   'https://u90us4gdu6.execute-api.eu-central-1.amazonaws.com/telemetry';
-const SAMPLE_INTERVAL_MS = 50; // ~20 Hz
+const SAMPLE_RATE_HZ = 20;
+const SAMPLE_INTERVAL_MS = 50; // 20 Hz
+const BATCH_SAMPLES = 40; // 2 seconds at 20 Hz
 const FLUSH_INTERVAL_MS = 2000; // 2 seconds
 const UI_REFRESH_INTERVAL_MS = 200; // 5 Hz UI readout update
+const REQUEST_TIMEOUT_MS = 8000;
 const GRAVITY_MS2 = 9.81;
 const MAX_RETRY_QUEUE = 20;
 const KEEP_AWAKE_TAG = 'sensor-telemetry-stream';
@@ -32,28 +35,47 @@ interface SensorSample {
   z: number;
 }
 
+interface ColumnarSeries {
+  t0: number;
+  t: number[];
+  x: number[];
+  y: number[];
+  z: number[];
+}
+
 interface LocationReading {
   lat: number;
   lon: number;
   accuracy: number | null;
 }
 
-interface TelemetryPayload {
-  device_id: string;
+interface TelemetryPayloadV1 {
+  schema_version: 1;
   event_type: 'raw_sensor_batch';
+  device_id: string;
+  platform: string;
+  sent_at: number;
   timestamp: string;
   value: number;
   unit: 'm/s^2';
-  metadata: {
-    platform: string;
-    location: LocationReading | null;
-    accelerometer: SensorSample[];
-    gyroscope: SensorSample[];
-  };
+  gyro_unit: 'rad/s';
+  sample_rate_hz: number;
+  location: LocationReading | null;
+  accelerometer: ColumnarSeries;
+  gyroscope: ColumnarSeries | null;
 }
 
 interface SubscriptionHandle {
   remove: () => void;
+}
+
+class HttpStatusError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
 }
 
 function generateDefaultDeviceId(): string {
@@ -69,6 +91,28 @@ function roundTo(value: number, decimals: number): number {
 function formatAxis(value: number | null): string {
   if (value === null) return '--';
   return value >= 0 ? ` ${value.toFixed(2)}` : value.toFixed(2);
+}
+
+function toColumnarSeries(samples: SensorSample[]): ColumnarSeries {
+  const t0 = samples[0].t;
+  const t: number[] = [];
+  const x: number[] = [];
+  const y: number[] = [];
+  const z: number[] = [];
+
+  let prevOffset = -1;
+  for (let i = 0; i < samples.length; i += 1) {
+    const sample = samples[i];
+    const rawOffset = sample.t - t0;
+    const offset = i === 0 ? 0 : Math.max(rawOffset, prevOffset + 1);
+    prevOffset = offset;
+    t.push(offset);
+    x.push(sample.x);
+    y.push(sample.y);
+    z.push(sample.z);
+  }
+
+  return { t0, t, x, y, z };
 }
 
 export default function App() {
@@ -91,7 +135,7 @@ export default function App() {
   const latestAccelRef = useRef<SensorSample | null>(null);
   const latestGyroRef = useRef<SensorSample | null>(null);
   const latestLocationRef = useRef<LocationReading | null>(null);
-  const retryQueueRef = useRef<TelemetryPayload[]>([]);
+  const retryQueueRef = useRef<TelemetryPayloadV1[]>([]);
   const isFlushingRef = useRef<boolean>(false);
 
   // Active subscriptions & timers
@@ -109,9 +153,8 @@ export default function App() {
     endpointRef.current = endpoint;
   }, [endpoint]);
 
-  const enqueueForRetry = useCallback((batches: TelemetryPayload[]) => {
+  const enqueueForRetry = useCallback((batches: TelemetryPayloadV1[]) => {
     const combined = [...batches, ...retryQueueRef.current];
-    // Cap at MAX_RETRY_QUEUE, keeping the most recent batches
     const trimmed =
       combined.length > MAX_RETRY_QUEUE
         ? combined.slice(combined.length - MAX_RETRY_QUEUE)
@@ -121,65 +164,83 @@ export default function App() {
   }, []);
 
   const postBatch = useCallback(
-    async (url: string, payload: TelemetryPayload): Promise<void> => {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
+    async (url: string, payload: TelemetryPayloadV1): Promise<void> => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-      if (!response.ok) {
-        const bodyText = await response.text().catch(() => '');
-        const detail = bodyText ? `: ${bodyText.slice(0, 120)}` : '';
-        throw new Error(`HTTP ${response.status}${detail}`);
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const bodyText = await response.text().catch(() => '');
+          const detail = bodyText ? `: ${bodyText.slice(0, 120)}` : '';
+          throw new HttpStatusError(response.status, `HTTP ${response.status}${detail}`);
+        }
+      } finally {
+        clearTimeout(timeoutId);
       }
     },
     []
   );
+
+  const buildPayloadFromBuffers = useCallback((): TelemetryPayloadV1 | null => {
+    if (accelBufferRef.current.length < BATCH_SAMPLES) {
+      return null;
+    }
+
+    const accelSamples = accelBufferRef.current.splice(0, BATCH_SAMPLES);
+    const gyroTake = Math.min(gyroBufferRef.current.length, BATCH_SAMPLES);
+    const gyroSamples =
+      gyroTake > 0 ? gyroBufferRef.current.splice(0, gyroTake) : [];
+
+    let maxMagnitude = 0;
+    for (let i = 0; i < accelSamples.length; i += 1) {
+      const s = accelSamples[i];
+      const mag = Math.sqrt(s.x * s.x + s.y * s.y + s.z * s.z);
+      if (mag > maxMagnitude) {
+        maxMagnitude = mag;
+      }
+    }
+
+    const sentAt = Date.now();
+    return {
+      schema_version: 1,
+      event_type: 'raw_sensor_batch',
+      device_id: deviceIdRef.current.trim() || 'unknown-device',
+      platform: Platform.OS,
+      sent_at: sentAt,
+      timestamp: new Date(sentAt).toISOString(),
+      value: roundTo(maxMagnitude, 2),
+      unit: 'm/s^2',
+      gyro_unit: 'rad/s',
+      sample_rate_hz: SAMPLE_RATE_HZ,
+      location: latestLocationRef.current,
+      accelerometer: toColumnarSeries(accelSamples),
+      gyroscope: gyroSamples.length > 0 ? toColumnarSeries(gyroSamples) : null,
+    };
+  }, []);
 
   const flushTelemetry = useCallback(async () => {
     if (isFlushingRef.current) {
       return;
     }
 
-    const accelBatch = accelBufferRef.current;
-    const gyroBatch = gyroBufferRef.current;
-    accelBufferRef.current = [];
-    gyroBufferRef.current = [];
-
-    const pendingBatches: TelemetryPayload[] = [...retryQueueRef.current];
+    const pendingBatches: TelemetryPayloadV1[] = [...retryQueueRef.current];
     retryQueueRef.current = [];
 
-    if (accelBatch.length > 0 || gyroBatch.length > 0) {
-      const lastAccelSample = accelBatch[accelBatch.length - 1];
-      const magnitude = lastAccelSample
-        ? roundTo(
-            Math.sqrt(
-              lastAccelSample.x * lastAccelSample.x +
-                lastAccelSample.y * lastAccelSample.y +
-                lastAccelSample.z * lastAccelSample.z
-            ),
-            2
-          )
-        : 0;
-
-      const newPayload: TelemetryPayload = {
-        device_id: deviceIdRef.current.trim() || 'unknown-device',
-        event_type: 'raw_sensor_batch',
-        timestamp: new Date().toISOString(),
-        value: magnitude,
-        unit: 'm/s^2',
-        metadata: {
-          platform: Platform.OS,
-          location: latestLocationRef.current,
-          accelerometer: accelBatch,
-          gyroscope: gyroBatch,
-        },
-      };
-
-      pendingBatches.push(newPayload);
+    // Drain any complete 40-sample batches (2 seconds at 20 Hz)
+    while (accelBufferRef.current.length >= BATCH_SAMPLES) {
+      const nextPayload = buildPayloadFromBuffers();
+      if (nextPayload) {
+        pendingBatches.push(nextPayload);
+      }
     }
 
     if (pendingBatches.length === 0) {
@@ -187,7 +248,6 @@ export default function App() {
       return;
     }
 
-    // Cap total pending batches before attempting delivery
     const boundedBatches =
       pendingBatches.length > MAX_RETRY_QUEUE
         ? pendingBatches.slice(pendingBatches.length - MAX_RETRY_QUEUE)
@@ -203,6 +263,7 @@ export default function App() {
     isFlushingRef.current = true;
     try {
       let sentCount = 0;
+      let dropped400 = false;
 
       for (let i = 0; i < boundedBatches.length; i += 1) {
         const batch = boundedBatches[i];
@@ -210,10 +271,20 @@ export default function App() {
           await postBatch(targetUrl, batch);
           sentCount += 1;
         } catch (err) {
+          // HTTP 400: client/contract error -> drop batch (do NOT retry)
+          if (err instanceof HttpStatusError && err.status === 400) {
+            dropped400 = true;
+            setErrorMessage(`Batch rejected (400) and dropped: ${err.message}`);
+            continue;
+          }
+
+          // 5xx, timeout, or network error -> preserve exact payload (including t0) and retry
           const remaining = boundedBatches.slice(i);
           enqueueForRetry(remaining);
           const msg = err instanceof Error ? err.message : 'Network request failed';
-          setErrorMessage(`Upload failed (${msg}). Queued ${retryQueueRef.current.length}/${MAX_RETRY_QUEUE} batches.`);
+          setErrorMessage(
+            `Upload failed (${msg}). Queued ${retryQueueRef.current.length}/${MAX_RETRY_QUEUE} batches.`
+          );
           if (sentCount > 0) {
             setBatchesSent((prev) => prev + sentCount);
             setLastSentUtc(new Date().toISOString());
@@ -227,11 +298,15 @@ export default function App() {
         setLastSentUtc(new Date().toISOString());
       }
       setRetryQueueSize(retryQueueRef.current.length);
-      setErrorMessage((prev) => (prev && prev.startsWith('Upload failed') ? null : prev));
+      if (!dropped400) {
+        setErrorMessage((prev) =>
+          prev && prev.startsWith('Upload failed') ? null : prev
+        );
+      }
     } finally {
       isFlushingRef.current = false;
     }
-  }, [enqueueForRetry, postBatch]);
+  }, [buildPayloadFromBuffers, enqueueForRetry, postBatch]);
 
   const stopStreaming = useCallback(async () => {
     if (flushTimerRef.current) {
@@ -330,7 +405,7 @@ export default function App() {
       setErrorMessage(`Location error: ${msg}`);
     }
 
-    // Start Accelerometer (~20 Hz, converted from G-force to m/s^2)
+    // Start Accelerometer (20 Hz, converted from G-force to m/s^2)
     try {
       const accelAvailable = await Accelerometer.isAvailableAsync();
       if (accelAvailable) {
@@ -344,6 +419,9 @@ export default function App() {
           };
           latestAccelRef.current = sample;
           accelBufferRef.current.push(sample);
+          if (accelBufferRef.current.length >= BATCH_SAMPLES) {
+            void flushTelemetry();
+          }
         });
       } else {
         setErrorMessage('Accelerometer is not available on this device.');
@@ -353,7 +431,7 @@ export default function App() {
       setErrorMessage(`Accelerometer error: ${msg}`);
     }
 
-    // Start Gyroscope (~20 Hz)
+    // Start Gyroscope (20 Hz, rad/s)
     try {
       const gyroAvailable = await Gyroscope.isAvailableAsync();
       if (gyroAvailable) {
@@ -389,7 +467,7 @@ export default function App() {
       }
     }, UI_REFRESH_INTERVAL_MS);
 
-    // Flush batched readings every 2 seconds
+    // Periodic 2-second flush/retry heartbeat
     flushTimerRef.current = setInterval(() => {
       void flushTelemetry();
     }, FLUSH_INTERVAL_MS);
@@ -464,7 +542,7 @@ export default function App() {
 
           {/* Configuration Card */}
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Configuration</Text>
+            <Text style={styles.sectionTitle}>Configuration (Contract v1)</Text>
 
             <Text style={styles.inputLabel}>Device ID</Text>
             <TextInput
@@ -516,7 +594,7 @@ export default function App() {
                   isStreaming ? styles.textGreen : styles.textMuted,
                 ]}
               >
-                {isStreaming ? 'Streaming (20 Hz / 2s batch)' : 'Stopped'}
+                {isStreaming ? 'Streaming (20 Hz / 40-sample batch)' : 'Stopped'}
               </Text>
             </View>
 

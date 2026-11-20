@@ -9,6 +9,12 @@ provider "aws" {
   region = "eu-central-1"
 }
 
+variable "alert_email" {
+  description = "Optional email address subscribed to the earthquake SNS alert topic."
+  type        = string
+  default     = ""
+}
+
 resource "aws_dynamodb_table" "sensor_events" {
   name         = "SensorEvents"
   billing_mode = "PAY_PER_REQUEST"
@@ -25,9 +31,37 @@ resource "aws_dynamodb_table" "sensor_events" {
   }
 }
 
+resource "aws_dynamodb_table" "detected_events" {
+  name         = "DetectedEvents"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "zone_id"
+  range_key    = "timestamp"
+
+  attribute {
+    name = "zone_id"
+    type = "S"
+  }
+  attribute {
+    name = "timestamp"
+    type = "S"
+  }
+}
+
+resource "aws_sns_topic" "quake_alerts" {
+  name = "quake-alerts-topic"
+}
+
+resource "aws_sns_topic_subscription" "email_alert" {
+  count     = var.alert_email != "" ? 1 : 0
+  topic_arn = aws_sns_topic.quake_alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_file = "${path.module}/../src/backend/ingest.py"
+  source_dir  = "${path.module}/../src/backend"
+  excludes    = ["test_*.py", "__pycache__/*"]
   output_path = "${path.module}/ingest.zip"
 }
 
@@ -53,11 +87,27 @@ resource "aws_iam_role_policy" "dynamodb_access" {
   role = aws_iam_role.lambda_exec.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Query", "dynamodb:Scan"]
-      Resource = aws_dynamodb_table.sensor_events.arn
-    }]
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:GetItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:Query",
+          "dynamodb:Scan"
+        ]
+        Resource = [
+          aws_dynamodb_table.sensor_events.arn,
+          aws_dynamodb_table.detected_events.arn
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
+        Resource = aws_sns_topic.quake_alerts.arn
+      }
+    ]
   })
 }
 
@@ -71,7 +121,20 @@ resource "aws_lambda_function" "ingest" {
 
   environment {
     variables = {
-      TABLE_NAME = aws_dynamodb_table.sensor_events.name
+      TABLE_NAME            = aws_dynamodb_table.sensor_events.name
+      ALERTS_TABLE_NAME     = aws_dynamodb_table.detected_events.name
+      SNS_TOPIC_ARN         = aws_sns_topic.quake_alerts.arn
+      SPIKE_ACC_THRESHOLD   = "2.5"
+      STATIONARY_GYRO_RMS   = "1.0"
+      STA_LTA_RATIO         = "3.0"
+      LTA_SEC               = "30"
+      WARMUP_SEC            = "15"
+      STATIONARY_WINDOW_SEC = "10"
+      ZONE_RADIUS_KM        = "5.0"
+      QUORUM_WINDOW_SEC     = "15"
+      QUORUM_MIN_DEVICES    = "2"
+      QUORUM_MIN_RATIO      = "0.5"
+      ALERT_COOLDOWN_SEC    = "30"
     }
   }
 }
@@ -102,6 +165,12 @@ resource "aws_apigatewayv2_route" "post_telemetry" {
 resource "aws_apigatewayv2_route" "get_events" {
   api_id    = aws_apigatewayv2_api.http_api.id
   route_key = "GET /events"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_alerts" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "GET /alerts"
   target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
 }
 
