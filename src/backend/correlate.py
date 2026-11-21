@@ -1,4 +1,9 @@
-"""Multi-device spatial/temporal earthquake correlation & SNS alerting."""
+"""Multi-device spatial/temporal earthquake correlation & SNS alerting.
+
+Evaluates active eligible (ARMED) devices over the last QUORUM_WINDOW_SEC (default 60s)
+and requires tight onset synchronization (ONSET_SYNC_SEC, default 5s) among triggering
+devices so unrelated everyday disturbances cannot form a false quorum.
+"""
 
 import json
 import math
@@ -12,6 +17,7 @@ except ImportError:
     Key = None
 
 EARTH_RADIUS_KM = 6371.0
+STATE_SORT_KEY = "__STATE__"
 
 
 def haversine_km(lat1, lon1, lat2, lon2):
@@ -41,7 +47,13 @@ def _load_config(config=None):
         "QUORUM_WINDOW_SEC": int(
             overrides.get(
                 "QUORUM_WINDOW_SEC",
-                os.environ.get("QUORUM_WINDOW_SEC", "15"),
+                os.environ.get("QUORUM_WINDOW_SEC", "60"),
+            )
+        ),
+        "ONSET_SYNC_SEC": int(
+            overrides.get(
+                "ONSET_SYNC_SEC",
+                os.environ.get("ONSET_SYNC_SEC", "5"),
             )
         ),
         "QUORUM_MIN_DEVICES": int(
@@ -85,13 +97,19 @@ def _parse_t_ms(item):
     if "t_ms" in item and item["t_ms"] is not None:
         return int(item["t_ms"])
     ts = item.get("timestamp")
-    if isinstance(ts, str) and ts:
+    if isinstance(ts, str) and ts and ts != STATE_SORT_KEY:
         try:
             dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             return int(dt.timestamp() * 1000)
         except ValueError:
             return None
     return None
+
+
+def _parse_onset_ms(item):
+    if "t_onset_ms" in item and item["t_onset_ms"] is not None:
+        return int(item["t_onset_ms"])
+    return _parse_t_ms(item)
 
 
 def _ms_to_iso(t_ms):
@@ -199,9 +217,11 @@ def correlate_triggers(
     ref_lat = float(ref_trigger["lat"])
     ref_lon = float(ref_trigger["lon"])
     ref_t_ms = int(ref_trigger["t_ms"])
+    ref_onset_ms = _parse_onset_ms(ref_trigger) or ref_t_ms
     zone_id = f"{round(ref_lat, 2)}_{round(ref_lon, 2)}"
 
     window_ms = cfg["QUORUM_WINDOW_SEC"] * 1000
+    onset_sync_ms = cfg["ONSET_SYNC_SEC"] * 1000
     radius_km = cfg["ZONE_RADIUS_KM"]
 
     all_events = _fetch_recent_events(events_table, ref_t_ms, window_ms)
@@ -210,8 +230,13 @@ def correlate_triggers(
     triggered_devices = set()
     max_pga = float(ref_trigger.get("pga", 0.0))
 
-    # Include recent records from SensorEvents within time window and radius
+    # Count eligible active devices over QUORUM_WINDOW_SEC (default 60s),
+    # and only count triggers whose onset is synchronized within ONSET_SYNC_SEC (default 5s).
     for item in all_events:
+        if item.get("timestamp") == STATE_SORT_KEY or item.get("item_type") == "DEVICE_STATE":
+            continue
+        if item.get("device_eligible") is False:
+            continue
         dev_id = item.get("device_id")
         if not dev_id:
             continue
@@ -227,12 +252,17 @@ def correlate_triggers(
         if dist <= radius_km:
             active_devices.add(str(dev_id))
             if bool(item.get("is_trigger", False)):
-                triggered_devices.add(str(dev_id))
-                pga_val = float(item.get("pga", 0.0))
-                if pga_val > max_pga:
-                    max_pga = pga_val
+                item_onset_ms = _parse_onset_ms(item)
+                if (
+                    item_onset_ms is not None
+                    and abs(item_onset_ms - ref_onset_ms) <= onset_sync_ms
+                ):
+                    triggered_devices.add(str(dev_id))
+                    pga_val = float(item.get("pga", 0.0))
+                    if pga_val > max_pga:
+                        max_pga = pga_val
 
-    # Ensure current triggers are always counted
+    # Ensure current synchronized triggers are always counted
     for trig in new_triggers:
         t_lat = trig.get("lat")
         t_lon = trig.get("lon")
@@ -241,10 +271,15 @@ def correlate_triggers(
         if haversine_km(ref_lat, ref_lon, float(t_lat), float(t_lon)) <= radius_km:
             dev_id = str(trig["device_id"])
             active_devices.add(dev_id)
-            triggered_devices.add(dev_id)
-            pga_val = float(trig.get("pga", 0.0))
-            if pga_val > max_pga:
-                max_pga = pga_val
+            trig_onset_ms = _parse_onset_ms(trig)
+            if (
+                trig_onset_ms is None
+                or abs(trig_onset_ms - ref_onset_ms) <= onset_sync_ms
+            ):
+                triggered_devices.add(dev_id)
+                pga_val = float(trig.get("pga", 0.0))
+                if pga_val > max_pga:
+                    max_pga = pga_val
 
     active_count = len(active_devices)
     consensus_ratio = len(triggered_devices) / max(active_count, 1)
@@ -293,6 +328,7 @@ def correlate_triggers(
                 "zone_id": zone_id,
                 "timestamp": event_ts,
                 "t_ms": ref_t_ms,
+                "t_onset_ms": ref_onset_ms,
                 "status": "CONFIRMED",
                 "lat": round(ref_lat, 6),
                 "lon": round(ref_lon, 6),

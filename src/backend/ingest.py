@@ -1,4 +1,20 @@
-"""Thin AWS Lambda handler for seismic telemetry ingestion, events, and alerts."""
+"""AWS Lambda handler for seismic telemetry ingestion, eligibility gating, events, and alerts.
+
+Architecture:
+1. RawBatches deduplication on (device_id, t0).
+2. preprocess.py cleans, validates, aligns, and measures gravity tilt & calmness.
+3. DeviceState Gatekeeper (ARMED / UNARMED):
+   - Tracks consecutive calm seconds (`static_sec`), `baseline_gravity`, and `lta_rms`
+     in DynamoDB (dedicated STATE_TABLE_NAME if configured, else hidden __STATE__
+     record in SensorEvents without gsi_pk so GET /events & correlate never see it).
+   - UNARMED phones never enter SensorEvents or the quake processor until calm for
+     ARMING_SEC seconds (default 15s, configurable via env var).
+   - ARMED phones pass batches to process.py. If process.py detects human handling
+     (phone picked up / tilted / high gyro), it signals `disarm_device=True`,
+     immediately flipping the device back to UNARMED without polluting SensorEvents.
+4. correlate.py correlates only eligible (ARMED) devices over the last minute with
+   strict onset synchronization.
+"""
 
 import base64
 import json
@@ -9,7 +25,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from correlate import correlate_triggers
-from preprocess import preprocess
+from preprocess import assess_batch_calmness, preprocess
 from process import process_clean_batch
 
 try:
@@ -29,7 +45,12 @@ except ImportError:
 _events_table = None
 _alerts_table = None
 _raw_table = None
+_state_table = None
 _sns_client = None
+
+STATE_SORT_KEY = "__STATE__"
+RECENT_EVENTS_INDEX = "RecentEventsIndex"
+RECENT_EVENTS_PK = "EVENT"
 
 
 def _get_events_table():
@@ -63,6 +84,18 @@ def _get_raw_table():
     return _raw_table
 
 
+def _get_state_table():
+    """Return dedicated DeviceState table if STATE_TABLE_NAME is set, else None."""
+    global _state_table
+    state_name = os.environ.get("STATE_TABLE_NAME", "")
+    if not state_name:
+        return None
+    if _state_table is None:
+        import boto3
+        _state_table = boto3.resource("dynamodb").Table(state_name)
+    return _state_table
+
+
 def _get_sns_client():
     global _sns_client
     if _sns_client is None:
@@ -93,6 +126,16 @@ def _to_decimal(obj):
         return {k: _to_decimal(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_to_decimal(v) for v in obj]
+    return obj
+
+
+def _from_decimal(obj):
+    if isinstance(obj, Decimal):
+        return int(obj) if obj % 1 == 0 else float(obj)
+    if isinstance(obj, list):
+        return [_from_decimal(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _from_decimal(v) for k, v in obj.items()}
     return obj
 
 
@@ -178,9 +221,98 @@ def _mark_raw_batch(raw_table, device_id, t0, status, reason=None, detail=None):
         pass
 
 
+# ---------------------------------------------------------------- DeviceState
+
+def _default_device_state(device_id):
+    return {
+        "device_id": device_id,
+        "state": "UNARMED",
+        "static_sec": 0,
+        "disturbance_sec": 0,
+        "baseline_gravity": None,
+        "lta_rms": None,
+        "last_t_ms": 0,
+        "disarm_reason": "",
+    }
+
+
+def _load_device_state(events_table, device_id):
+    state_table = _get_state_table()
+    try:
+        if state_table is not None:
+            resp = state_table.get_item(Key={"device_id": device_id})
+        else:
+            resp = events_table.get_item(
+                Key={"device_id": device_id, "timestamp": STATE_SORT_KEY}
+            )
+    except Exception:
+        return _default_device_state(device_id)
+
+    raw_item = resp.get("Item")
+    if not isinstance(raw_item, dict):
+        return _default_device_state(device_id)
+
+    item = _from_decimal(raw_item)
+    base = _default_device_state(device_id)
+    base.update(
+        {
+            "state": str(item.get("state", "UNARMED")),
+            "static_sec": int(item.get("static_sec", 0)),
+            "disturbance_sec": int(item.get("disturbance_sec", 0)),
+            "baseline_gravity": item.get("baseline_gravity"),
+            "lta_rms": float(item["lta_rms"]) if item.get("lta_rms") is not None else None,
+            "last_t_ms": int(item.get("last_t_ms", 0)),
+            "disarm_reason": str(item.get("disarm_reason", "")),
+        }
+    )
+    return base
+
+
+def _save_device_state(events_table, device_state):
+    state_table = _get_state_table()
+    item = {
+        "device_id": device_state["device_id"],
+        "item_type": "DEVICE_STATE",
+        "state": device_state["state"],
+        "static_sec": int(device_state["static_sec"]),
+        "disturbance_sec": int(device_state["disturbance_sec"]),
+        "baseline_gravity": device_state["baseline_gravity"],
+        "lta_rms": device_state["lta_rms"],
+        "last_t_ms": int(device_state["last_t_ms"]),
+        "disarm_reason": device_state.get("disarm_reason", ""),
+        "updated_at_ms": int(time.time() * 1000),
+    }
+    if state_table is not None:
+        state_table.put_item(Item=_to_decimal(item))
+    else:
+        # Store under __STATE__ without gsi_pk so RecentEventsIndex never sees it
+        item["timestamp"] = STATE_SORT_KEY
+        events_table.put_item(Item=_to_decimal(item))
+
+
+def _ema_vec(prev_vec, new_vec, alpha=0.2):
+    if new_vec is None:
+        return prev_vec
+    if prev_vec is None or len(prev_vec) != 3:
+        return [round(float(x), 4) for x in new_vec]
+    return [
+        round((1.0 - alpha) * float(p) + alpha * float(n), 4)
+        for p, n in zip(prev_vec, new_vec)
+    ]
+
+
+def _ema_scalar(prev_val, new_val, alpha=0.15):
+    if new_val is None:
+        return prev_val
+    if prev_val is None:
+        return round(float(new_val), 6)
+    return round((1.0 - alpha) * float(prev_val) + alpha * float(new_val), 6)
+
+
 def adapt_clean_batch(clean):
-    """Bridge Simion's preprocess.py clean_batch_v1 output to process.py's expected input."""
+    """Bridge preprocess.py clean_batch_v1 output to process.py's expected input."""
     sig = clean["signal"]
+    qual = clean.get("quality") or {}
     loc = clean.get("location")
     t_start_ms = int(sig["t_start_ms"])
 
@@ -200,25 +332,35 @@ def adapt_clean_batch(clean):
         "location": adapted_location,
         "acc": sig["acc"],
         "gyro": sig.get("gyro"),
+        "gravity_vector": qual.get("gravity_vector"),
+        "gravity_start": qual.get("gravity_start"),
+        "gravity_end": qual.get("gravity_end"),
+        "intra_batch_tilt_deg": qual.get("intra_batch_tilt_deg"),
         "warnings": list(clean.get("warnings") or []),
     }
 
-
-RECENT_EVENTS_INDEX = "RecentEventsIndex"
-RECENT_EVENTS_PK = "EVENT"
 
 EVENTS_PROJECTION_FIELDS = (
     "device_id",
     "timestamp",
     "t_ms",
+    "t_onset_ms",
     "rms",
     "pga",
     "variance",
+    "crest_factor",
+    "active_fraction",
+    "horiz_ratio",
     "dominant_freq_hz",
     "gyro_rms",
+    "gyro_peak",
+    "tilt_change_deg",
     "is_stationary",
+    "is_candidate",
     "sta_lta",
     "is_trigger",
+    "device_state",
+    "device_eligible",
     "lat",
     "lon",
     "warnings",
@@ -275,6 +417,10 @@ def _fetch_device_history(events_table, device_id, t0_ms, lookback_sec):
     items = resp.get("Items", [])
     history = []
     for item in items:
+        if item.get("device_id") != device_id:
+            continue
+        if item.get("timestamp") == STATE_SORT_KEY or item.get("item_type") == "DEVICE_STATE":
+            continue
         if "rms" not in item:
             continue
         t_ms = item.get("t_ms")
@@ -289,6 +435,7 @@ def _fetch_device_history(events_table, device_id, t0_ms, lookback_sec):
                 "t_ms": int(t_ms),
                 "rms": float(item["rms"]),
                 "is_stationary": bool(item.get("is_stationary", False)),
+                "is_candidate": bool(item.get("is_candidate", item.get("is_trigger", False))),
             }
         )
     return history
@@ -314,7 +461,7 @@ def _handle_post_telemetry(event):
             {"status": "rejected", "reason": "SCHEMA_INVALID", "error": "Payload must be a JSON object"},
         )
 
-    # Optional RawBatches storage & deduplication on (device_id, t0)
+    # 1. Optional RawBatches storage & deduplication on (device_id, t0)
     raw_table = _get_raw_table()
     raw_key = _extract_raw_key(body)
     if raw_table is not None and raw_key is not None:
@@ -329,7 +476,7 @@ def _handle_post_telemetry(event):
                 },
             )
 
-    # Validate & clean via Simion's preprocess.py
+    # 2. Validate & clean via preprocess.py
     clean = preprocess(body, received_at_ms)
     if clean.get("status") != "ok":
         reason = clean.get("reason", "SCHEMA_INVALID")
@@ -353,6 +500,7 @@ def _handle_post_telemetry(event):
     device_id = clean_batch["device_id"]
     t0 = int(clean_batch["t0"])
     t0_iso = _ms_to_iso(t0)
+    duration_s = int(clean["signal"]["duration_s"])
 
     events_table = _get_events_table()
 
@@ -371,41 +519,233 @@ def _handle_post_telemetry(event):
                 },
             )
 
-    lta_sec = int(os.environ.get("LTA_SEC", "30"))
-    history = _fetch_device_history(events_table, device_id, t0, lta_sec + 5)
+    # 3. Device Eligibility Gatekeeper (ARMED / UNARMED)
+    arming_sec = int(os.environ.get("ARMING_SEC", "15"))
+    max_gap_sec = int(os.environ.get("MAX_DEVICE_GAP_SEC", "30"))
+    max_disturbance_sec = int(os.environ.get("MAX_DISTURBANCE_SEC", "6"))
 
-    result = process_clean_batch(clean_batch, history)
+    device_state = _load_device_state(events_table, device_id)
+
+    # Reset state if device went offline for too long
+    if device_state["last_t_ms"] > 0 and (t0 - device_state["last_t_ms"]) > max_gap_sec * 1000:
+        device_state = _default_device_state(device_id)
+
+    # Bootstrap eligibility from existing SensorEvents history if state record is brand new
+    lta_sec = int(os.environ.get("LTA_SEC", "30"))
+    history = None
+    if device_state["last_t_ms"] == 0 and device_state["state"] == "UNARMED":
+        history = _fetch_device_history(events_table, device_id, t0, max(lta_sec, arming_sec) + 5)
+        trailing_calm = 0
+        calm_rms_vals = []
+        for w in reversed(history):
+            if w["is_stationary"] and not w["is_candidate"]:
+                trailing_calm += 1
+                calm_rms_vals.append(w["rms"])
+            else:
+                break
+        if trailing_calm > 0:
+            device_state["static_sec"] = trailing_calm
+            device_state["lta_rms"] = round(sum(calm_rms_vals) / len(calm_rms_vals), 6)
+            if trailing_calm >= arming_sec:
+                device_state["state"] = "ARMED"
+
+    calm_info = assess_batch_calmness(
+        clean, baseline_gravity=device_state.get("baseline_gravity")
+    )
+    gvec = (clean.get("quality") or {}).get("gravity_vector")
+
+    # Case A: Batch is calm -> build/maintain ARMED eligibility
+    if calm_info["is_calm"]:
+        device_state["static_sec"] += duration_s
+        device_state["disturbance_sec"] = 0
+        device_state["baseline_gravity"] = _ema_vec(device_state["baseline_gravity"], gvec)
+        device_state["lta_rms"] = _ema_scalar(device_state["lta_rms"], calm_info["acc_rms"])
+        device_state["last_t_ms"] = t0
+
+        if device_state["static_sec"] >= arming_sec:
+            device_state["state"] = "ARMED"
+            device_state["disarm_reason"] = ""
+
+        _save_device_state(events_table, device_state)
+
+        # Not yet armed -> keep out of SensorEvents so only eligible phones enter DB
+        if device_state["state"] != "ARMED":
+            return _response(
+                200,
+                {
+                    "status": "arming",
+                    "device_id": device_id,
+                    "device_state": "UNARMED",
+                    "eligible": False,
+                    "static_sec": device_state["static_sec"],
+                    "arming_sec": arming_sec,
+                    "warnings": clean_batch["warnings"],
+                },
+            )
+
+        # Armed & calm -> record clean telemetry in SensorEvents as an eligible active sensor
+        if history is None:
+            history = _fetch_device_history(events_table, device_id, t0, lta_sec + 5)
+
+        result = process_clean_batch(clean_batch, history, device_state=device_state)
+        features = result["features"]
+        for feat in features:
+            item = dict(feat)
+            item["gsi_pk"] = RECENT_EVENTS_PK
+            item["device_state"] = "ARMED"
+            item["device_eligible"] = True
+            events_table.put_item(Item=_to_decimal(item))
+
+        max_pga = max((f["pga"] for f in features), default=0.0)
+        return _response(
+            200,
+            {
+                "status": "processed",
+                "device_id": device_id,
+                "device_state": "ARMED",
+                "eligible": True,
+                "windows_processed": len(features),
+                "max_pga": round(max_pga, 6),
+                "triggers_count": 0,
+                "warnings": clean_batch["warnings"],
+                "correlation": None,
+            },
+        )
+
+    # Case B: Batch is NOT calm and phone is UNARMED -> ignore (phone in hand / YouTube / walking)
+    if device_state["state"] != "ARMED":
+        device_state["state"] = "UNARMED"
+        device_state["static_sec"] = 0
+        device_state["disturbance_sec"] = 0
+        device_state["baseline_gravity"] = None
+        device_state["last_t_ms"] = t0
+        device_state["disarm_reason"] = ",".join(calm_info["reasons"])
+        _save_device_state(events_table, device_state)
+
+        return _response(
+            200,
+            {
+                "status": "ignored_unarmed",
+                "device_id": device_id,
+                "device_state": "UNARMED",
+                "eligible": False,
+                "reasons": calm_info["reasons"],
+                "warnings": clean_batch["warnings"],
+            },
+        )
+
+    # Case C: Batch is NOT calm and phone WAS ARMED -> send to processor (solves earthquake paradox)
+    if history is None:
+        history = _fetch_device_history(events_table, device_id, t0, lta_sec + 5)
+
+    result = process_clean_batch(clean_batch, history, device_state=device_state)
     features = result["features"]
     triggers = result["triggers"]
 
-    for feat in features:
-        item = dict(feat)
-        item["gsi_pk"] = RECENT_EVENTS_PK
-        events_table.put_item(Item=_to_decimal(item))
+    # Processor feedback: human handling (pickup / tilt / rotation) -> disarm immediately!
+    if result.get("disarm_device"):
+        reason = result.get("disarm_reason") or "HUMAN_HANDLING"
+        device_state["state"] = "UNARMED"
+        device_state["static_sec"] = 0
+        device_state["disturbance_sec"] = 0
+        device_state["baseline_gravity"] = None
+        device_state["last_t_ms"] = t0
+        device_state["disarm_reason"] = reason
+        _save_device_state(events_table, device_state)
 
-    correlation = None
-    if triggers:
-        sns_topic_arn = os.environ.get("SNS_TOPIC_ARN", "")
-        sns_client = _get_sns_client() if sns_topic_arn else None
-        correlation = correlate_triggers(
-            triggers,
-            events_table,
-            _get_alerts_table(),
-            sns_client=sns_client,
-            sns_topic_arn=sns_topic_arn,
+        return _response(
+            200,
+            {
+                "status": "disarmed",
+                "device_id": device_id,
+                "device_state": "UNARMED",
+                "eligible": False,
+                "disarm_reason": reason,
+                "triggers_count": 0,
+                "warnings": clean_batch["warnings"],
+            },
         )
 
+    any_candidate = any(f.get("is_candidate") for f in features)
+
+    if triggers or any_candidate:
+        # Potential or confirmed earthquake: keep ARMED, freeze baseline_gravity & lta_rms
+        device_state["disturbance_sec"] = 0
+        device_state["last_t_ms"] = t0
+        _save_device_state(events_table, device_state)
+
+        for feat in features:
+            item = dict(feat)
+            item["gsi_pk"] = RECENT_EVENTS_PK
+            item["device_state"] = "ARMED"
+            item["device_eligible"] = True
+            events_table.put_item(Item=_to_decimal(item))
+
+        correlation = None
+        if triggers:
+            sns_topic_arn = os.environ.get("SNS_TOPIC_ARN", "")
+            sns_client = _get_sns_client() if sns_topic_arn else None
+            correlation = correlate_triggers(
+                triggers,
+                events_table,
+                _get_alerts_table(),
+                sns_client=sns_client,
+                sns_topic_arn=sns_topic_arn,
+            )
+
+        max_pga = max((f["pga"] for f in features), default=0.0)
+        return _response(
+            200,
+            {
+                "status": "processed",
+                "device_id": device_id,
+                "device_state": "ARMED",
+                "eligible": True,
+                "windows_processed": len(features),
+                "max_pga": round(max_pga, 6),
+                "triggers_count": len(triggers),
+                "warnings": clean_batch["warnings"],
+                "correlation": correlation,
+            },
+        )
+
+    # Non-calm, non-handling, non-seismic disturbance (e.g., violent typing / desk knocking)
+    device_state["disturbance_sec"] += duration_s
+    device_state["last_t_ms"] = t0
+    if device_state["disturbance_sec"] >= max_disturbance_sec:
+        device_state["state"] = "UNARMED"
+        device_state["static_sec"] = 0
+        device_state["disturbance_sec"] = 0
+        device_state["baseline_gravity"] = None
+        device_state["disarm_reason"] = "PERSISTENT_DISTURBANCE"
+        _save_device_state(events_table, device_state)
+        return _response(
+            200,
+            {
+                "status": "disarmed",
+                "device_id": device_id,
+                "device_state": "UNARMED",
+                "eligible": False,
+                "disarm_reason": "PERSISTENT_DISTURBANCE",
+                "triggers_count": 0,
+                "warnings": clean_batch["warnings"],
+            },
+        )
+
+    _save_device_state(events_table, device_state)
     max_pga = max((f["pga"] for f in features), default=0.0)
     return _response(
         200,
         {
-            "status": "processed",
+            "status": "ignored_disturbance",
             "device_id": device_id,
+            "device_state": "ARMED",
+            "eligible": True,
             "windows_processed": len(features),
             "max_pga": round(max_pga, 6),
-            "triggers_count": len(triggers),
+            "triggers_count": 0,
             "warnings": clean_batch["warnings"],
-            "correlation": correlation,
+            "correlation": None,
         },
     )
 
@@ -422,7 +762,10 @@ def _handle_get_events():
                 ProjectionExpression=EVENTS_PROJECTION,
                 ExpressionAttributeNames=EVENTS_ATTR_NAMES,
             )
-            items = resp.get("Items", [])
+            items = [
+                it for it in resp.get("Items", [])
+                if it.get("timestamp") != STATE_SORT_KEY
+            ]
             if items:
                 return _response(200, {"events": items})
         except Exception:
@@ -436,6 +779,7 @@ def _handle_get_events():
         projection=EVENTS_PROJECTION,
         attr_names=EVENTS_ATTR_NAMES,
     )
+    items = [it for it in items if it.get("timestamp") != STATE_SORT_KEY]
     items.sort(key=lambda x: str(x.get("timestamp", "")), reverse=True)
     return _response(200, {"events": items[:50]})
 

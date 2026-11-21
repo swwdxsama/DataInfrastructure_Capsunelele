@@ -9,6 +9,7 @@ from datetime import datetime
 FORMAT = "clean_batch_v1"
 G_MS2 = 9.81
 DEG2RAD = math.pi / 180.0
+RAD2DEG = 180.0 / math.pi
 
 MAX_ACC_MS2 = 80.0
 MAX_GYRO_RADS = 35.0
@@ -26,6 +27,11 @@ def default_config():
         "MIN_BATCH_SEC": float(os.environ.get("MIN_BATCH_SEC", "1")),
         "MAX_BATCH_AGE_SEC": float(os.environ.get("MAX_BATCH_AGE_SEC", "60")),
         "MAX_GAP_FRACTION": float(os.environ.get("MAX_GAP_FRACTION", "0.2")),
+        "STATIC_GYRO_RMS": float(os.environ.get("STATIC_GYRO_RMS", "0.15")),
+        "STATIC_GYRO_PEAK": float(os.environ.get("STATIC_GYRO_PEAK", "0.35")),
+        "STATIC_ACC_RMS": float(os.environ.get("STATIC_ACC_RMS", "0.35")),
+        "STATIC_ACC_PGA": float(os.environ.get("STATIC_ACC_PGA", "1.0")),
+        "MAX_CALM_TILT_DEG": float(os.environ.get("MAX_CALM_TILT_DEG", "6.0")),
     }
 
 
@@ -40,6 +46,23 @@ class Rejected(Exception):
 
 def _is_num(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def vector_angle_deg(v1, v2):
+    """Angle in degrees between two 3D vectors; returns None if either is invalid/zero."""
+    if not (isinstance(v1, (list, tuple)) and isinstance(v2, (list, tuple))):
+        return None
+    if len(v1) != 3 or len(v2) != 3:
+        return None
+    if not (all(_is_num(x) for x in v1) and all(_is_num(x) for x in v2)):
+        return None
+    n1 = math.sqrt(v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2])
+    n2 = math.sqrt(v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2])
+    if n1 < 1e-6 or n2 < 1e-6:
+        return None
+    cos_val = (v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]) / (n1 * n2)
+    cos_val = max(-1.0, min(1.0, cos_val))
+    return math.acos(cos_val) * RAD2DEG
 
 
 def _reject(payload, reason, detail):
@@ -169,6 +192,87 @@ def _r(v, nd=5):
     return [round(x, nd) for x in v]
 
 
+def _vec_stats(vec_dict):
+    """Return (rms, peak) of Euclidean magnitude for {'x': [...], 'y': [...], 'z': [...]}."""
+    if not isinstance(vec_dict, dict):
+        return None, None
+    xs, ys, zs = vec_dict.get("x", []), vec_dict.get("y", []), vec_dict.get("z", [])
+    n = min(len(xs), len(ys), len(zs))
+    if n == 0:
+        return None, None
+    sq_sum = 0.0
+    peak = 0.0
+    for i in range(n):
+        m = math.sqrt(xs[i] * xs[i] + ys[i] * ys[i] + zs[i] * zs[i])
+        sq_sum += m * m
+        if m > peak:
+            peak = m
+    return math.sqrt(sq_sum / n), peak
+
+
+def assess_batch_calmness(clean, baseline_gravity=None, config=None):
+    """Pure-Python stability gate: decide if a clean_batch_v1 represents a static phone.
+
+    Used by ingest.py to advance/reset a device's ARMED eligibility without keeping
+    raw 30-batch queues in memory.
+    """
+    cfg = default_config()
+    if config:
+        cfg.update(config)
+
+    sig = clean.get("signal") or {}
+    qual = clean.get("quality") or {}
+
+    acc_rms, acc_pga = _vec_stats(sig.get("acc"))
+    gyro_rms, gyro_peak = _vec_stats(sig.get("gyro"))
+
+    gvec = qual.get("gravity_vector")
+    g_end = qual.get("gravity_end") or gvec
+    intra_tilt = qual.get("intra_batch_tilt_deg")
+
+    tilt_vs_baseline = None
+    if baseline_gravity is not None:
+        a1 = vector_angle_deg(baseline_gravity, gvec) if gvec is not None else None
+        a2 = vector_angle_deg(baseline_gravity, g_end) if g_end is not None else None
+        angles = [a for a in (a1, a2) if a is not None]
+        if angles:
+            tilt_vs_baseline = max(angles)
+
+    reasons = []
+    if gyro_rms is None or gyro_peak is None:
+        reasons.append("NO_GYRO")
+    else:
+        if gyro_rms >= cfg["STATIC_GYRO_RMS"]:
+            reasons.append("GYRO_RMS_HIGH")
+        if gyro_peak >= cfg["STATIC_GYRO_PEAK"]:
+            reasons.append("GYRO_PEAK_HIGH")
+
+    if acc_rms is None or acc_pga is None:
+        reasons.append("NO_ACC")
+    else:
+        if acc_rms >= cfg["STATIC_ACC_RMS"]:
+            reasons.append("ACC_RMS_HIGH")
+        if acc_pga >= cfg["STATIC_ACC_PGA"]:
+            reasons.append("ACC_PGA_HIGH")
+
+    max_calm_tilt = cfg["MAX_CALM_TILT_DEG"]
+    if intra_tilt is not None and intra_tilt >= max_calm_tilt:
+        reasons.append("INTRA_BATCH_TILT")
+    if tilt_vs_baseline is not None and tilt_vs_baseline >= max_calm_tilt:
+        reasons.append("BASELINE_TILT_DRIFT")
+
+    return {
+        "is_calm": len(reasons) == 0,
+        "reasons": reasons,
+        "acc_rms": round(acc_rms, 6) if acc_rms is not None else None,
+        "acc_pga": round(acc_pga, 6) if acc_pga is not None else None,
+        "gyro_rms": round(gyro_rms, 6) if gyro_rms is not None else None,
+        "gyro_peak": round(gyro_peak, 6) if gyro_peak is not None else None,
+        "intra_batch_tilt_deg": round(intra_tilt, 3) if intra_tilt is not None else None,
+        "tilt_vs_baseline_deg": round(tilt_vs_baseline, 3) if tilt_vs_baseline is not None else None,
+    }
+
+
 # ---------------------------------------------------------------- main
 
 def preprocess(payload, received_at_ms, config=None):
@@ -251,11 +355,17 @@ def _preprocess(p, received_at_ms, cfg):
     if gyro_out is None:
         warnings.append("NO_GYRO")
 
-    # 8. Gravitatie
+    # 8. Gravitatie + masurare schimbare de orientare in interiorul batch-ului
     gvec = [sum(ax) / n, sum(ay) / n, sum(az) / n]
     gnorm = math.sqrt(sum(g * g for g in gvec))
     if abs(gnorm - G_MS2) > GRAVITY_TOLERANCE_MS2:
         warnings.append("GRAVITY_MISMATCH")
+
+    seg = max(1, min(fs // 2, n // 3)) if n >= 3 else 1
+    g_start = [sum(ax[:seg]) / seg, sum(ay[:seg]) / seg, sum(az[:seg]) / seg]
+    g_end = [sum(ax[-seg:]) / seg, sum(ay[-seg:]) / seg, sum(az[-seg:]) / seg]
+    intra_tilt_deg = vector_angle_deg(g_start, g_end) or 0.0
+
     ax = [v - gvec[0] for v in ax]
     ay = [v - gvec[1] for v in ay]
     az = [v - gvec[2] for v in az]
@@ -298,6 +408,9 @@ def _preprocess(p, received_at_ms, cfg):
             "gap_fraction": round(gap_fraction, 4),
             "gravity_vector": _r(gvec, 4),
             "gravity_norm": round(gnorm, 4),
+            "gravity_start": _r(g_start, 4),
+            "gravity_end": _r(g_end, 4),
+            "intra_batch_tilt_deg": round(intra_tilt_deg, 3),
             "n_raw_samples": n_raw,
         },
         "warnings": warnings,
