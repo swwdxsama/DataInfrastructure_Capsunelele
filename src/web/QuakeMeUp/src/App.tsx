@@ -9,7 +9,7 @@ import { StatusHeader } from './components/StatusHeader'
 import { SystemStatus } from './components/SystemStatus'
 import { TriggerTimeline } from './components/TriggerTimeline'
 import { WidgetState } from './components/WidgetState'
-import { POLL_INTERVAL_MS } from './config'
+import { POLL_INTERVAL_MS, QUAKE_MIN_DEVICES } from './config'
 import { usePolling } from './hooks/usePolling'
 import { deriveView } from './lib/derive'
 import { waitingState } from './lib/waiting'
@@ -132,7 +132,7 @@ export default function App() {
               <h2 id="h-events" className="panel-title">
                 Cutremure detectate
               </h2>
-              <p className="panel-note">Confirmate de cel puțin 3 senzori · ultimele 10</p>
+              <p className="panel-note">Confirmate de cel puțin {QUAKE_MIN_DEVICES} senzori · ultimele 10</p>
             </div>
             {view ? (
               view.events.length > 0 ? (

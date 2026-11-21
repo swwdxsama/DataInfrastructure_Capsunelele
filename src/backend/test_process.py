@@ -701,6 +701,53 @@ class TestEndToEndEverydayVsQuake(unittest.TestCase):
                 else:
                     os.environ[k] = v
 
+    def test_post_telemetry_enforces_optional_api_key(self):
+        import ingest
+
+        orig_key = os.environ.get("INGEST_API_KEY")
+        try:
+            os.environ["INGEST_API_KEY"] = "secret-quake-key"
+
+            # Missing header -> 401
+            resp_missing = ingest.lambda_handler(
+                {
+                    "requestContext": {"http": {"method": "POST", "path": "/telemetry"}},
+                    "rawPath": "/telemetry",
+                    "body": "{}",
+                },
+                None,
+            )
+            self.assertEqual(resp_missing["statusCode"], 401)
+
+            # Wrong header -> 401
+            resp_wrong = ingest.lambda_handler(
+                {
+                    "requestContext": {"http": {"method": "POST", "path": "/telemetry"}},
+                    "rawPath": "/telemetry",
+                    "headers": {"X-Api-Key": "wrong-key"},
+                    "body": "{}",
+                },
+                None,
+            )
+            self.assertEqual(resp_wrong["statusCode"], 401)
+
+            # Valid header -> passes auth (reaches schema validation -> 400 on empty body)
+            resp_valid = ingest.lambda_handler(
+                {
+                    "requestContext": {"http": {"method": "POST", "path": "/telemetry"}},
+                    "rawPath": "/telemetry",
+                    "headers": {"X-Api-Key": "secret-quake-key"},
+                    "body": "{}",
+                },
+                None,
+            )
+            self.assertEqual(resp_valid["statusCode"], 400)
+        finally:
+            if orig_key is None:
+                os.environ.pop("INGEST_API_KEY", None)
+            else:
+                os.environ["INGEST_API_KEY"] = orig_key
+
 
 if __name__ == "__main__":
     unittest.main()

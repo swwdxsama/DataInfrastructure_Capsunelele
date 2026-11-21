@@ -38,6 +38,7 @@ jobs:
         working-directory: infrastructure
     env:
       TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+      TF_VAR_ingest_api_key: ${{ secrets.INGEST_API_KEY }}
       TF_VAR_dispatch_provider: ${{ vars.DISPATCH_PROVIDER || 'twilio' }}
       TF_VAR_dispatch_to_number: ${{ secrets.DISPATCH_TO_NUMBER }}
       TF_VAR_dispatch_from_number: ${{ secrets.DISPATCH_FROM_NUMBER }}

@@ -33,12 +33,12 @@ variable "pipeline" {
     # Trigger
     STA_SEC               = 1
     LTA_SEC               = 30
-    STA_LTA_RATIO         = 4
-    SPIKE_ACC_THRESHOLD   = 0.05
-    STATIONARY_GYRO_RMS   = 0.05
-    STATIONARY_WINDOW_SEC = 5
+    STA_LTA_RATIO         = 3.0
+    SPIKE_ACC_THRESHOLD   = 2.5
+    STATIONARY_GYRO_RMS   = 1.0
+    STATIONARY_WINDOW_SEC = 10
     # Corelare
-    ZONE_RADIUS_KM     = 2
+    ZONE_RADIUS_KM     = 5.0
     QUORUM_WINDOW_SEC  = 15
     QUORUM_MIN_DEVICES = 2
     QUORUM_MIN_RATIO   = 0.5

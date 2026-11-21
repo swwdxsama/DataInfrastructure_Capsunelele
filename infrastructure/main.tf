@@ -21,6 +21,13 @@ variable "alert_email" {
   default     = ""
 }
 
+variable "ingest_api_key" {
+  description = "Optional shared x-api-key required on POST /telemetry. Empty disables API key check."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 resource "aws_dynamodb_table" "sensor_events" {
   name         = "SensorEvents"
   billing_mode = "PAY_PER_REQUEST"
@@ -174,23 +181,15 @@ resource "aws_lambda_function" "ingest" {
 
   environment {
     variables = merge(local.pipeline_env, {
-      TABLE_NAME            = aws_dynamodb_table.sensor_events.name
-      ALERTS_TABLE_NAME     = aws_dynamodb_table.detected_events.name
-      RAW_TABLE_NAME        = aws_dynamodb_table.raw_batches.name
-      STATE_TABLE_NAME      = aws_dynamodb_table.device_state.name
-      SNS_TOPIC_ARN         = aws_sns_topic.quake_alerts.arn
-      PREPROCESS_ENABLED    = var.preprocess_enabled ? "1" : "0"
-      SPIKE_ACC_THRESHOLD   = "2.5"
-      STATIONARY_GYRO_RMS   = "1.0"
-      STA_LTA_RATIO         = "3.0"
-      LTA_SEC               = "30"
-      WARMUP_SEC            = "15"
-      STATIONARY_WINDOW_SEC = "10"
-      ZONE_RADIUS_KM        = "5.0"
-      QUORUM_WINDOW_SEC     = "15"
-      QUORUM_MIN_DEVICES    = "2"
-      QUORUM_MIN_RATIO      = "0.5"
-      ALERT_COOLDOWN_SEC    = "30"
+      TABLE_NAME         = aws_dynamodb_table.sensor_events.name
+      ALERTS_TABLE_NAME  = aws_dynamodb_table.detected_events.name
+      RAW_TABLE_NAME     = aws_dynamodb_table.raw_batches.name
+      STATE_TABLE_NAME   = aws_dynamodb_table.device_state.name
+      SNS_TOPIC_ARN      = aws_sns_topic.quake_alerts.arn
+      INGEST_API_KEY     = var.ingest_api_key
+      PREPROCESS_ENABLED = var.preprocess_enabled ? "1" : "0"
+      WARMUP_SEC         = "15"
+      ALERT_COOLDOWN_SEC = "30"
     })
   }
 }

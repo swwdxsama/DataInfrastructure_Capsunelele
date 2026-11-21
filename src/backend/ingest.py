@@ -17,6 +17,7 @@ Architecture:
 """
 
 import base64
+import hmac
 import json
 import math
 import os
@@ -460,7 +461,29 @@ def _fetch_device_history(events_table, device_id, t0_ms, lookback_sec):
     return history
 
 
+def _is_api_key_authorized(event):
+    """Validate optional x-api-key header on POST /telemetry when INGEST_API_KEY is set."""
+    expected = os.environ.get("INGEST_API_KEY", "").strip()
+    if not expected:
+        return True
+    headers = event.get("headers") or {}
+    if not isinstance(headers, dict):
+        return False
+    provided = ""
+    for k, v in headers.items():
+        if isinstance(k, str) and k.lower() == "x-api-key" and isinstance(v, str):
+            provided = v.strip()
+            break
+    return bool(provided) and hmac.compare_digest(provided, expected)
+
+
 def _handle_post_telemetry(event):
+    if not _is_api_key_authorized(event):
+        return _response(
+            401,
+            {"status": "unauthorized", "error": "Invalid or missing x-api-key"},
+        )
+
     received_at_ms = int(time.time() * 1000)
     raw_text = event.get("body") or ""
     if event.get("isBase64Encoded"):

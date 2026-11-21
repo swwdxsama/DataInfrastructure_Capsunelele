@@ -46,15 +46,15 @@ export const HOUR_HISTORY_POLL_MS = 15_000
 export const GRAVITY_MS2 = 9.80665
 
 /** Dynamic acceleration (|a| − g) at or above this counts as a trigger, in m/s². */
-export const TRIGGER_THRESHOLD_MS2 = 1.0
+export const TRIGGER_THRESHOLD_MS2 = 2.5
 
 /** A device counts as online if its newest reading is at most this old. */
 export const ONLINE_WITHIN_MS = 30_000
 
 /** An earthquake: at least this many distinct devices triggering… */
-export const QUAKE_MIN_DEVICES = 3
+export const QUAKE_MIN_DEVICES = 2
 /** …within this many milliseconds of the first trigger. */
-export const QUAKE_WINDOW_MS = 10_000
+export const QUAKE_WINDOW_MS = 15_000
 
 /** Readings are kept in memory this long, so history builds up while the page is open. */
 export const READING_BUFFER_MS = 2 * 60 * 60 * 1000

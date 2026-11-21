@@ -29,6 +29,12 @@ const MAX_RETRY_QUEUE = 20;
 const MAX_BUFFERED_SAMPLES = 200;
 const REQUEST_TIMEOUT_MS = 10000;
 const KEEP_AWAKE_TAG = 'sensor-telemetry-stream';
+// Used indoors until GPS locks so preprocess.py accepts batches (with GPS_LOW_ACCURACY warning).
+const FALLBACK_INDOOR_LOCATION: LocationReading = {
+  lat: 46.7712,
+  lon: 23.6236,
+  accuracy: 999,
+};
 
 interface SensorSample {
   t: number;
@@ -120,6 +126,7 @@ function toColumnarSeries(samples: SensorSample[]): ColumnarSeries {
 export default function App() {
   const [deviceId, setDeviceId] = useState<string>(generateDefaultDeviceId);
   const [endpoint, setEndpoint] = useState<string>(DEFAULT_ENDPOINT);
+  const [apiKey, setApiKey] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [lastSentUtc, setLastSentUtc] = useState<string>('--');
   const [batchesSent, setBatchesSent] = useState<number>(0);
@@ -132,6 +139,7 @@ export default function App() {
   // Refs for high-frequency sensor buffers and active config
   const deviceIdRef = useRef<string>(deviceId);
   const endpointRef = useRef<string>(endpoint);
+  const apiKeyRef = useRef<string>(apiKey);
   const accelBufferRef = useRef<SensorSample[]>([]);
   const gyroBufferRef = useRef<SensorSample[]>([]);
   const latestAccelRef = useRef<SensorSample | null>(null);
@@ -174,6 +182,10 @@ export default function App() {
     endpointRef.current = endpoint;
   }, [endpoint]);
 
+  useEffect(() => {
+    apiKeyRef.current = apiKey;
+  }, [apiKey]);
+
   const enqueueForRetry = useCallback((batches: TelemetryPayloadV1[]) => {
     const combined = [...batches, ...retryQueueRef.current];
     const trimmed =
@@ -193,11 +205,16 @@ export default function App() {
 
       let response: Response;
       try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        const trimmedKey = apiKeyRef.current.trim();
+        if (trimmedKey) {
+          headers['x-api-key'] = trimmedKey;
+        }
         response = await fetch(url, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers,
           body: JSON.stringify(payload),
           signal: controller.signal,
         });
@@ -250,7 +267,7 @@ export default function App() {
       unit: 'm/s^2',
       gyro_unit: 'rad/s',
       sample_rate_hz: SAMPLE_RATE_HZ,
-      location: latestLocationRef.current,
+      location: latestLocationRef.current ?? FALLBACK_INDOOR_LOCATION,
       accelerometer: toColumnarSeries(accelSamples),
       gyroscope: gyroSamples.length > 0 ? toColumnarSeries(gyroSamples) : null,
     };
@@ -292,7 +309,7 @@ export default function App() {
     isFlushingRef.current = true;
     try {
       let sentCount = 0;
-      let dropped400 = false;
+      let droppedClientError = false;
 
       for (let i = 0; i < boundedBatches.length; i += 1) {
         const batch = boundedBatches[i];
@@ -302,9 +319,16 @@ export default function App() {
         } catch (err) {
           // HTTP 400: client/contract error -> drop batch (do NOT retry)
           if (err instanceof HttpStatusError && err.status === 400) {
-            dropped400 = true;
+            droppedClientError = true;
             setErrorMessage(`Batch rejected (400) and dropped: ${err.message}`);
             continue;
+          }
+
+          // HTTP 401: invalid/missing API key -> drop flush without retry storm
+          if (err instanceof HttpStatusError && err.status === 401) {
+            droppedClientError = true;
+            setErrorMessage(`Unauthorized (401): check API Key (${err.message})`);
+            break;
           }
 
           // 5xx, timeout, or network error -> preserve exact payload (including t0) and retry
@@ -327,9 +351,11 @@ export default function App() {
         setLastSentUtc(new Date().toISOString());
       }
       setRetryQueueSize(retryQueueRef.current.length);
-      if (!dropped400) {
+      if (!droppedClientError) {
         setErrorMessage((prev) =>
-          prev && prev.startsWith('Upload failed') ? null : prev
+          prev && (prev.startsWith('Upload failed') || prev.startsWith('Unauthorized'))
+            ? null
+            : prev
         );
       }
     } finally {
@@ -399,7 +425,7 @@ export default function App() {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
           setErrorMessage(
-            'Foreground location permission denied. Streaming sensors without GPS coordinates.'
+            'Foreground location permission denied. Using indoor fallback coordinates.'
           );
         } else {
           try {
@@ -615,6 +641,18 @@ export default function App() {
               autoCorrect={false}
               keyboardType="url"
             />
+
+            <Text style={styles.inputLabel}>API Key (optional)</Text>
+            <TextInput
+              style={styles.input}
+              value={apiKey}
+              onChangeText={setApiKey}
+              placeholder="x-api-key header"
+              placeholderTextColor="#64748B"
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+            />
           </View>
 
           {/* Primary Action Button */}
@@ -733,20 +771,20 @@ export default function App() {
                 <Text style={styles.sensorMeta}>
                   {latestLocation?.accuracy != null
                     ? `±${latestLocation.accuracy}m`
-                    : 'No fix'}
+                    : 'Indoor fallback (waiting for GPS)'}
                 </Text>
               </View>
               <View style={styles.axisRow}>
                 <View style={styles.axisBox}>
                   <Text style={styles.axisLabel}>LAT</Text>
                   <Text style={styles.axisValue}>
-                    {latestLocation ? latestLocation.lat.toFixed(5) : '--'}
+                    {(latestLocation ?? FALLBACK_INDOOR_LOCATION).lat.toFixed(5)}
                   </Text>
                 </View>
                 <View style={styles.axisBox}>
                   <Text style={styles.axisLabel}>LON</Text>
                   <Text style={styles.axisValue}>
-                    {latestLocation ? latestLocation.lon.toFixed(5) : '--'}
+                    {(latestLocation ?? FALLBACK_INDOOR_LOCATION).lon.toFixed(5)}
                   </Text>
                 </View>
               </View>
