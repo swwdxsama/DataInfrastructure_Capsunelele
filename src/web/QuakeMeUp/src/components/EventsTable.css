@@ -1,0 +1,65 @@
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sort-button:hover,
+.sort-button[data-active] {
+  color: var(--ink);
+}
+
+.sort-icon {
+  width: 8px;
+  height: 12px;
+  flex: none;
+  fill: var(--rule-strong);
+}
+
+.sort-icon[data-dir='asc'] .sort-up,
+.sort-icon[data-dir='desc'] .sort-down {
+  fill: var(--trace);
+}
+
+.events-table td {
+  padding-block: var(--space-2);
+}
+
+.events-table-time {
+  white-space: nowrap;
+}
+
+.events-table-live {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--alert);
+  font-weight: 700;
+}
+
+.events-table-coords {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.events-table-peak {
+  font-weight: 700;
+}
+
+.events-table tr[data-active] td {
+  background: var(--alert-wash);
+}
+
+.events-table tr[data-active] td:first-child {
+  box-shadow: inset 3px 0 0 var(--alert);
+}

@@ -1,0 +1,116 @@
+.system {
+  display: grid;
+  gap: var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+.system-items {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.system-item {
+  min-width: 0;
+  padding: var(--space-2) var(--space-4);
+  border-left: 1px solid var(--rule);
+}
+
+.system-item:first-child {
+  border-left: 0;
+}
+
+.system-item dt {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.system-note {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  cursor: help;
+}
+
+.system-item dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+  margin-top: 2px;
+}
+
+.system-item strong {
+  font-size: var(--text-md);
+  line-height: 1.25;
+}
+
+.system-of {
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+.system-health {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+}
+
+.system-health .badge {
+  font-size: var(--text-base);
+}
+
+.system-detail {
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  line-height: 1.3;
+}
+
+.system-notice {
+  margin: 0 var(--space-2) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 2px;
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.system-notice[data-kind='error'] {
+  color: var(--alert);
+  background: var(--alert-wash);
+  border-left: 3px solid var(--alert);
+}
+
+.system-notice[data-kind='setup'] {
+  border-left: 3px solid var(--threshold);
+  background: var(--surface-sunk);
+}
+
+@media (max-width: 1100px) {
+  .system-items {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .system-item:nth-child(4) {
+    border-left: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .system-items {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .system-item:nth-child(4) {
+    border-left: 1px solid var(--rule);
+  }
+  .system-item:nth-child(odd) {
+    border-left: 0;
+  }
+}

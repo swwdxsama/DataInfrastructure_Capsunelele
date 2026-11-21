@@ -1,0 +1,48 @@
+.badge {
+  --badge-on: var(--surface);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+
+.badge-icon {
+  width: 1em;
+  height: 1em;
+  flex: none;
+}
+
+/* Normal / online stays quiet; color is reserved for states that need attention. */
+.badge[data-tone='ok'] .badge-icon {
+  color: var(--online);
+}
+.badge[data-tone='warn'] {
+  color: var(--threshold);
+}
+.badge[data-tone='alert'] {
+  color: var(--alert);
+}
+.badge[data-tone='down'] {
+  color: var(--alert);
+}
+.badge[data-tone='unknown'] {
+  color: var(--ink-3);
+}
+
+.demo-badge {
+  display: inline-block;
+  padding: 1px var(--space-2);
+  border: 1px dashed var(--threshold);
+  border-radius: 2px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--threshold);
+  white-space: nowrap;
+  cursor: help;
+}

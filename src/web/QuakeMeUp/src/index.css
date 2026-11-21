@@ -1,0 +1,266 @@
+@import '@fontsource/atkinson-hyperlegible-next/400.css';
+@import '@fontsource/atkinson-hyperlegible-next/700.css';
+
+/* Keep color values in sync with src/lib/palette.ts */
+:root {
+  --paper: #edf1f0;
+  --surface: #fafbfb;
+  --surface-sunk: #f2f5f5;
+  --ink: #1e2731;
+  --ink-2: #4a5561;
+  --ink-3: #69737d;
+  --rule: #cbd3d6;
+  --rule-strong: #9aa5ab;
+  --trace: #1f4c94;
+  --threshold: #a86b12;
+  --alert: #b3202a;
+  --alert-ink: #ffffff;
+  --alert-wash: #f7e6e6;
+  --select-wash: #e3ebf5;
+  --online: #2e7048;
+  --offline: #8a949c;
+  --focus: #1f4c94;
+
+  --font: 'Atkinson Hyperlegible Next', 'Segoe UI', system-ui, sans-serif;
+
+  /* Type scale: 14 / 16 / 20 / 28 / 44 */
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.25rem;
+  --text-lg: 1.75rem;
+  --text-xl: 2.75rem;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius: 4px;
+  --panel-width: 440px;
+
+  color-scheme: light;
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--ink);
+  background: var(--paper);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Dark theme: the default (set in index.html), light is one click away in the header. Keep in sync with src/lib/palette.ts */
+:root[data-theme='dark'] {
+  --paper: #0f151b;
+  --surface: #172029;
+  --surface-sunk: #121a21;
+  --ink: #e6ebef;
+  --ink-2: #a9b4bd;
+  --ink-3: #86919b;
+  --rule: #2e3944;
+  --rule-strong: #4b5864;
+  --trace: #7aa9f2;
+  --threshold: #e3a64a;
+  --alert: #f2676b;
+  --alert-ink: #1a0b0c;
+  --alert-wash: #3a1d21;
+  --select-wash: #1f3150;
+  --online: #4fb87a;
+  --offline: #7d8892;
+  --focus: #7aa9f2;
+
+  color-scheme: dark;
+}
+
+/* Large displays and projectors at 1920 px and up */
+@media (min-width: 1800px) {
+  :root {
+    font-size: 18px;
+    --panel-width: 480px;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--paper);
+}
+
+h1,
+h2,
+h3,
+p,
+ol,
+ul,
+dl,
+dd,
+figure {
+  margin: 0;
+}
+
+ol,
+ul {
+  padding: 0;
+  list-style: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── Panels ─────────────────────────────────────────── */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-2);
+}
+
+.panel-head-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-3);
+  min-width: 0;
+}
+
+.panel-title {
+  font-size: var(--text-base);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.panel-note {
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.panel-hint {
+  color: var(--ink);
+}
+
+.panel-body {
+  padding: 0 var(--space-4) var(--space-4);
+  min-width: 0;
+}
+
+.empty {
+  padding: var(--space-4);
+  color: var(--ink-2);
+}
+
+/* ── Status dot ─────────────────────────────────────── */
+
+.dot {
+  display: inline-block;
+  width: 0.625em;
+  height: 0.625em;
+  border-radius: 50%;
+  flex: none;
+  background: var(--offline);
+}
+.dot[data-state='online'] {
+  background: var(--online);
+}
+.dot[data-state='above'] {
+  background: var(--alert);
+}
+.dot[data-state='offline'] {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--offline);
+}
+
+/* ── Tables ─────────────────────────────────────────── */
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-base);
+}
+
+.table th {
+  text-align: left;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--ink-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule-strong);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+.table tr:last-child td {
+  border-bottom: 0;
+}
+
+.table th:first-child,
+.table td:first-child {
+  padding-left: var(--space-4);
+}
+
+.table th:last-child,
+.table td:last-child {
+  padding-right: var(--space-4);
+}
+
+.table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.secondary {
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+  }
+}

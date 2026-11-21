@@ -1,0 +1,77 @@
+.panel-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+}
+
+/* Segmented range control: one bordered group, the active segment filled with the accent. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segmented button {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-left: 1px solid var(--rule-strong);
+  background: transparent;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.segmented button:first-child {
+  border-left: 0;
+}
+
+.segmented button:hover {
+  background: var(--surface-sunk);
+  color: var(--ink);
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--select-wash);
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--trace);
+}
+
+.segmented button:focus-visible {
+  outline-offset: -3px;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.chart-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chart-legend-line {
+  width: 18px;
+  border-top: 2px solid var(--trace);
+}
+
+.chart-legend-line[data-kind='threshold'] {
+  border-top: 2px dashed var(--threshold);
+}
+
+.chart-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--alert);
+}

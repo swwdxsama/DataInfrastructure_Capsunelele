@@ -1,0 +1,58 @@
+.device-table tbody tr {
+  cursor: pointer;
+}
+
+.device-table tbody tr:hover {
+  background: var(--surface-sunk);
+}
+
+.device-table tbody tr[data-selected] {
+  background: var(--select-wash);
+}
+
+.device-table tbody tr[data-selected] td:first-child {
+  box-shadow: inset 4px 0 0 var(--trace);
+}
+
+.device-table tbody tr[data-state='offline'] td {
+  color: var(--ink-3);
+}
+
+.device-table tbody tr[data-state='offline'] .device-table-name {
+  color: var(--ink-2);
+}
+
+.device-table tbody tr[data-state='above'] .device-table-accel {
+  color: var(--alert);
+  font-weight: 700;
+}
+
+.device-table-name {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.device-table-name:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.device-table-seen {
+  white-space: nowrap;
+}
+
+.device-table-seen .secondary {
+  margin-left: var(--space-2);
+}
+
+.device-table-plug {
+  width: 0.9em;
+  height: 0.9em;
+  margin-left: var(--space-1);
+  vertical-align: -0.1em;
+  color: var(--online);
+}

@@ -1,0 +1,125 @@
+.device-panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: 4px solid var(--trace);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.device-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.device-panel-title {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+/* Focus is moved here programmatically so screen readers announce the profile; no ring needed. */
+.device-panel-title:focus,
+.device-panel-title:focus-visible {
+  outline: none;
+}
+
+.device-panel-sub {
+  color: var(--ink-2);
+  margin-top: var(--space-1);
+}
+
+.device-panel-close {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  background: var(--surface);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  cursor: pointer;
+  flex: none;
+}
+
+.device-panel-close:hover {
+  background: var(--surface-sunk);
+}
+
+.device-panel-close svg {
+  width: 12px;
+  height: 12px;
+}
+
+.device-panel-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.device-panel-section {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.device-panel-h3 {
+  font-size: var(--text-base);
+  font-weight: 700;
+}
+
+.device-panel-accel strong {
+  font-size: var(--text-xl);
+  line-height: 1;
+}
+
+.device-panel-accel[data-above] strong {
+  color: var(--alert);
+}
+
+.device-panel-accel .secondary {
+  display: block;
+  margin-top: var(--space-1);
+}
+
+.device-panel-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3) var(--space-4);
+}
+
+.device-panel-field dt {
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.device-panel-wide {
+  grid-column: 1 / -1;
+}
+
+.device-panel-vector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-5);
+}
+
+.device-panel-chart-wait {
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--rule);
+  border-radius: 3px;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+.device-panel .empty {
+  padding: 0;
+}
