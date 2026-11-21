@@ -29,8 +29,9 @@ from preprocess import assess_batch_calmness, preprocess
 from process import process_clean_batch
 
 try:
-    from boto3.dynamodb.conditions import Key
+    from boto3.dynamodb.conditions import Attr, Key
 except ImportError:
+    Attr = None
     Key = None
 
 try:
@@ -372,9 +373,27 @@ EVENTS_ATTR_NAMES = {
 EVENTS_PROJECTION = ", ".join(EVENTS_ATTR_NAMES.keys())
 
 
-def _scan_table(table, max_items=None, max_pages=None, projection=None, attr_names=None):
+DEVICES_PROJECTION_FIELDS = (
+    "device_id",
+    "state",
+    "static_sec",
+    "disarm_reason",
+    "last_t_ms",
+    "updated_at_ms",
+)
+DEVICES_ATTR_NAMES = {
+    f"#d{i}": name for i, name in enumerate(DEVICES_PROJECTION_FIELDS)
+}
+DEVICES_PROJECTION = ", ".join(DEVICES_ATTR_NAMES.keys())
+
+
+def _scan_table(
+    table, max_items=None, max_pages=None, projection=None, attr_names=None, filter_expression=None
+):
     items = []
     kwargs = {}
+    if filter_expression is not None:
+        kwargs["FilterExpression"] = filter_expression
     if projection:
         kwargs["ProjectionExpression"] = projection
     if attr_names:
@@ -790,6 +809,44 @@ def _handle_get_alerts():
     return _response(200, {"alerts": items[:20]})
 
 
+def _handle_get_devices():
+    """Current eligibility state of every phone that has ever sent a batch."""
+    state_table = _get_state_table()
+    if state_table is not None:
+        items = _scan_table(
+            state_table, projection=DEVICES_PROJECTION, attr_names=DEVICES_ATTR_NAMES
+        )
+    else:
+        # No dedicated table: states are the hidden __STATE__ rows in SensorEvents.
+        items = _scan_table(
+            _get_events_table(),
+            projection=DEVICES_PROJECTION,
+            attr_names=DEVICES_ATTR_NAMES,
+            filter_expression=Attr("timestamp").eq(STATE_SORT_KEY) if Attr else None,
+        )
+        items = [it for it in items if "state" in it]
+
+    arming_sec = int(os.environ.get("ARMING_SEC", "15"))
+    devices = []
+    for raw in items:
+        it = _from_decimal(raw)
+        updated_at_ms = int(it.get("updated_at_ms") or 0)
+        devices.append(
+            {
+                "device_id": it.get("device_id"),
+                "state": str(it.get("state") or "UNARMED"),
+                "static_sec": int(it.get("static_sec") or 0),
+                "arming_sec": arming_sec,
+                "disarm_reason": it.get("disarm_reason") or None,
+                "last_t_ms": int(it.get("last_t_ms") or 0),
+                "updated_at_ms": updated_at_ms,
+                "updated_at": _ms_to_iso(updated_at_ms) if updated_at_ms else None,
+            }
+        )
+    devices.sort(key=lambda d: str(d["device_id"]))
+    return _response(200, {"devices": devices})
+
+
 def lambda_handler(event, context):
     http_ctx = event.get("requestContext", {}).get("http", {})
     method = http_ctx.get("method", "GET").upper()
@@ -802,6 +859,8 @@ def lambda_handler(event, context):
             return _handle_get_events()
         if method == "GET" and path.rstrip("/") == "/alerts":
             return _handle_get_alerts()
+        if method == "GET" and path.rstrip("/") == "/devices":
+            return _handle_get_devices()
         return _response(404, {"error": f"Route not found: {method} {path}"})
     except Exception as e:
         return _response(500, {"error": str(e)})

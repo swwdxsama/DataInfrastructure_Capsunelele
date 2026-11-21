@@ -9,6 +9,7 @@ import {
 } from '../config'
 import type {
   AccelPoint,
+  Arming,
   DashboardSnapshot,
   Device,
   Event,
@@ -37,6 +38,14 @@ import type { DashboardApi } from './types'
  * - a trigger is a reading at or above TRIGGER_THRESHOLD_MS2;
  * - an earthquake is QUAKE_MIN_DEVICES devices triggering within QUAKE_WINDOW_MS.
  * Thresholds live in src/config.ts.
+ *
+ * Arming states come from GET /devices, next to /events on the same API:
+ *
+ *   GET /devices  →  { "devices": [{ "device_id", "state": "ARMED" | "UNARMED", ... }] }
+ *
+ * Only armed phones write to /events, so /devices is also the only place an
+ * unarmed (but connected) phone shows up. If /devices is missing or fails, the
+ * dashboard keeps working without states.
  */
 
 interface RawLocation {
@@ -59,6 +68,22 @@ interface RawReading {
   } | null
 }
 
+interface RawDeviceState {
+  device_id?: string
+  state?: string
+  static_sec?: number
+  arming_sec?: number
+  disarm_reason?: string | null
+  /** Server clock of the last batch received from the phone, epoch ms. */
+  updated_at_ms?: number
+}
+
+interface DeviceState {
+  arming: Arming
+  /** Server clock of the last batch, epoch ms. */
+  seenAt: number | null
+}
+
 interface Reading {
   deviceId: string
   t: number
@@ -73,9 +98,39 @@ export function createEventsApi(url: string): DashboardApi {
   const readings = new Map<string, Reading>()
   const firstSeen = new Map<string, number>()
   const lastLocation = new Map<string, RawLocation>()
+  /** Null until GET /devices answers; stays null if the backend has no such route. */
+  let deviceStates: Map<string, DeviceState> | null = null
+  const devicesUrl = /\/events\/?$/.test(url) ? url.replace(/\/events\/?$/, '/devices') : null
+
+  async function pollStates(signal: AbortSignal) {
+    if (!devicesUrl) return
+    try {
+      const body = await fetchJson<{ devices?: RawDeviceState[] }>(devicesUrl, signal, 'GET /devices')
+      const next = new Map<string, DeviceState>()
+      for (const raw of body.devices ?? []) {
+        if (!raw.device_id) continue
+        next.set(raw.device_id, {
+          arming: {
+            state: raw.state === 'ARMED' ? 'armed' : 'unarmed',
+            staticSec: Number(raw.static_sec) || 0,
+            armingSec: Number(raw.arming_sec) || 0,
+            disarmReason: raw.disarm_reason || null,
+          },
+          seenAt: Number(raw.updated_at_ms) || null,
+        })
+      }
+      deviceStates = next
+    } catch (err) {
+      if (signal.aborted) throw err
+      // Keep the last known states; /events alone is enough for the rest of the dashboard.
+    }
+  }
 
   async function poll(signal: AbortSignal) {
-    const body = await fetchJson<{ events?: RawReading[] } | RawReading[]>(url, signal, 'GET /events')
+    const [body] = await Promise.all([
+      fetchJson<{ events?: RawReading[] } | RawReading[]>(url, signal, 'GET /events'),
+      pollStates(signal),
+    ])
     const items = Array.isArray(body) ? body : (body.events ?? [])
 
     for (const raw of items) {
@@ -128,8 +183,13 @@ export function createEventsApi(url: string): DashboardApi {
 
     const devices: Device[] = []
     const latest: Telemetry[] = []
-    for (const [id, list] of byDevice) {
-      const last = list[list.length - 1]
+    // Unarmed phones have no readings, only a state: list them too.
+    const ids = new Set([...byDevice.keys(), ...(deviceStates?.keys() ?? [])])
+    for (const id of ids) {
+      const list = byDevice.get(id)
+      const last = list?.[list.length - 1]
+      const state = deviceStates?.get(id)
+      const seenAt = Math.max(last?.t ?? 0, state?.seenAt ?? 0)
       const loc = lastLocation.get(id)
       const location: GeoPoint | null = loc ? { lat: loc.lat, lon: loc.lon } : null
       devices.push({
@@ -139,10 +199,12 @@ export function createEventsApi(url: string): DashboardApi {
         model: null,
         location,
         locality: location ? `${location.lat.toFixed(2)}°, ${location.lon.toFixed(2)}°` : 'fără GPS',
-        online: now - last.t <= ONLINE_WITHIN_MS,
-        lastSeenAt: new Date(last.t).toISOString(),
-        registeredAt: new Date(firstSeen.get(id) ?? last.t).toISOString(),
+        online: seenAt > 0 && now - seenAt <= ONLINE_WITHIN_MS,
+        lastSeenAt: seenAt > 0 ? new Date(seenAt).toISOString() : null,
+        registeredAt: new Date(firstSeen.get(id) ?? (seenAt || now)).toISOString(),
+        arming: deviceStates ? (state?.arming ?? null) : null,
       })
+      if (!last) continue
       latest.push({
         deviceId: id,
         recordedAt: new Date(last.t).toISOString(),
@@ -157,10 +219,13 @@ export function createEventsApi(url: string): DashboardApi {
 
     const { triggers, events } = detect(all, now)
     const recentCount = all.filter((r) => r.t > now - 60_000).length
+    const online = devices.filter((d) => d.online)
     const status: SystemStatus = {
       generatedAt: new Date(now).toISOString(),
       devicesTotal: devices.length,
-      devicesOnline: devices.filter((d) => d.online).length,
+      devicesOnline: online.length,
+      devicesArmed: deviceStates ? online.filter((d) => d.arming?.state === 'armed').length : null,
+      devicesUnarmed: deviceStates ? online.filter((d) => d.arming?.state === 'unarmed').length : null,
       messagesPerSecond: recentCount / 60,
       latencyP50Ms: null,
       latencyP95Ms: null,

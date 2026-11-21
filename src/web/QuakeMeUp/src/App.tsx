@@ -178,7 +178,10 @@ export default function App() {
               </h2>
               {data && (
                 <p className="panel-note">
-                  {data.status.devicesOnline} din {data.status.devicesTotal} online · apasă un rând pentru detalii
+                  {data.status.devicesOnline} din {data.status.devicesTotal} online
+                  {data.status.devicesArmed != null &&
+                    ` (${data.status.devicesArmed} armate, ${data.status.devicesUnarmed ?? 0} nearmate)`}
+                  {' · '}apasă un rând pentru detalii
                 </p>
               )}
             </div>

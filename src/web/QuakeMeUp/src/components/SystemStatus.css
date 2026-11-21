@@ -57,6 +57,21 @@
   font-size: var(--text-sm);
 }
 
+.system-arming {
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.system-arming [data-arm='armed'] {
+  color: var(--trace);
+}
+
+.system-arming [data-arm='unarmed'] {
+  color: var(--threshold);
+}
+
 .system-health {
   display: flex;
   flex-wrap: wrap;

@@ -11,6 +11,23 @@ export interface GeoPoint {
   lon: number
 }
 
+/**
+ * Whether the backend uses the phone for earthquake detection. A phone is
+ * armed after lying still for `armingSec` seconds and is disarmed as soon as
+ * it is picked up, tilted or shaken for too long.
+ */
+export type ArmState = 'armed' | 'unarmed'
+
+export interface Arming {
+  state: ArmState
+  /** Consecutive seconds the phone has been still. */
+  staticSec: number
+  /** Seconds of stillness needed to arm. */
+  armingSec: number
+  /** Backend code for why the phone is unarmed, e.g. "TILT_CHANGE"; null when armed. */
+  disarmReason: string | null
+}
+
 export interface Device {
   id: string
   name: string
@@ -24,6 +41,8 @@ export interface Device {
   online: boolean
   lastSeenAt: string | null
   registeredAt: string
+  /** Last state reported by the backend; null or missing when the API does not report it. */
+  arming?: Arming | null
 }
 
 export interface Vector3 {
@@ -89,6 +108,9 @@ export interface SystemStatus {
   generatedAt: string
   devicesTotal: number
   devicesOnline: number
+  /** Online devices per arming state; null when the API does not report states. */
+  devicesArmed?: number | null
+  devicesUnarmed?: number | null
   messagesPerSecond: number
   /** Device-to-database latency; null when the API does not report receive times. */
   latencyP50Ms: number | null

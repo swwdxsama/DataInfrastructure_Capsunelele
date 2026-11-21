@@ -39,6 +39,13 @@ export function SystemStatus({ status, view, apiConfigured, updatedAt, failingSi
             <>
               <strong>{status.devicesOnline}</strong>
               <span className="system-of"> / {status.devicesTotal}</span>
+              {status.devicesArmed != null && status.devicesUnarmed != null && (
+                <span className="system-arming">
+                  <span data-arm="armed">{status.devicesArmed} armate</span>
+                  {' · '}
+                  <span data-arm="unarmed">{status.devicesUnarmed} nearmate</span>
+                </span>
+              )}
             </>
           ) : (
             <strong>{NONE}</strong>
