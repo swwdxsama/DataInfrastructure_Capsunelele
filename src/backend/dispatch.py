@@ -13,6 +13,49 @@ import urllib.request
 from xml.sax.saxutils import escape
 
 
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
+NOMINATIM_USER_AGENT = "QuakeMeUp-EarthquakeAlert/1.0"
+AREA_KEYS = ("neighbourhood", "suburb", "quarter", "city_district", "village")
+CITY_KEYS = ("city", "town", "municipality", "county")
+
+
+def resolve_area(lat, lon, timeout=2.5):
+    """Reverse-geocode (lat, lon) via OpenStreetMap Nominatim; return None on any error."""
+    try:
+        query = urllib.parse.urlencode(
+            {
+                "format": "jsonv2",
+                "lat": f"{float(lat):.6f}",
+                "lon": f"{float(lon):.6f}",
+                "zoom": "14",
+                "addressdetails": "1",
+            }
+        )
+        req = urllib.request.Request(
+            f"{NOMINATIM_URL}?{query}",
+            headers={
+                "User-Agent": NOMINATIM_USER_AGENT,
+                "Accept-Language": "en",
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        address = data.get("address") if isinstance(data, dict) else None
+        if not isinstance(address, dict):
+            return None
+
+        area = next((str(address[k]).strip() for k in AREA_KEYS if address.get(k)), "")
+        city = next((str(address[k]).strip() for k in CITY_KEYS if address.get(k)), "")
+
+        if area and city and area.lower() != city.lower():
+            return f"the {area} area of {city}"
+        return area or city or None
+    except Exception:
+        return None
+
+
 def build_dispatch_text(alert):
     """Build a spoken emergency dispatch announcement from a DetectedEvents SNS alert."""
     lat = alert.get("lat")
@@ -23,7 +66,11 @@ def build_dispatch_text(alert):
     device_count = len(devices) if isinstance(devices, list) else 1
 
     if lat is not None and lon is not None:
-        loc_phrase = f"coordinates {float(lat):.2f} north, {float(lon):.2f} east"
+        area_name = resolve_area(lat, lon)
+        if area_name:
+            loc_phrase = area_name
+        else:
+            loc_phrase = f"coordinates {float(lat):.2f} north, {float(lon):.2f} east"
     else:
         loc_phrase = f"zone {zone_id}"
 
@@ -40,6 +87,9 @@ def build_dispatch_text(alert):
         "Your registered contact may be in the affected area. "
         "Please check immediately if assistance is required."
     )
+
+
+format_announcement = build_dispatch_text
 
 
 def _call_via_twilio(to_number, from_number, message_text, dry_run=False):

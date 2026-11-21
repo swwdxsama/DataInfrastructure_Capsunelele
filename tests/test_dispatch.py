@@ -1,6 +1,7 @@
 """Unit tests for dispatch.py (automated emergency voice call Lambda)."""
 
 import json
+import urllib.error
 
 import dispatch
 
@@ -17,6 +18,20 @@ def _sns_event(alert):
     }
 
 
+class _FakeHttpResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return json.dumps(self._payload).encode("utf-8")
+
+
 def test_skips_when_destination_not_configured(monkeypatch):
     monkeypatch.delenv("DISPATCH_TO_NUMBER", raising=False)
     resp = dispatch.lambda_handler(_sns_event({"zone_id": "46.77_23.62"}), None)
@@ -24,7 +39,68 @@ def test_skips_when_destination_not_configured(monkeypatch):
     assert json.loads(resp["body"])["status"] == "skipped"
 
 
-def test_build_dispatch_text_includes_coords_pga_and_sensors():
+def test_resolve_area_formats_neighborhood_and_city_and_sends_headers(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=2.5):
+        captured["url"] = req.full_url
+        captured["ua"] = req.get_header("User-agent")
+        captured["lang"] = req.get_header("Accept-language")
+        captured["timeout"] = timeout
+        return _FakeHttpResponse(
+            {
+                "address": {
+                    "suburb": "Mărăști",
+                    "city": "Cluj-Napoca",
+                    "country": "Romania",
+                }
+            }
+        )
+
+    monkeypatch.setattr(dispatch.urllib.request, "urlopen", fake_urlopen)
+
+    area = dispatch.resolve_area(46.7712, 23.6236)
+    assert area == "the Mărăști area of Cluj-Napoca"
+    assert "nominatim.openstreetmap.org/reverse" in captured["url"]
+    assert "zoom=14" in captured["url"]
+    assert captured["ua"] == "QuakeMeUp-EarthquakeAlert/1.0"
+    assert captured["lang"] == "en"
+    assert captured["timeout"] == 2.5
+
+
+def test_build_dispatch_text_uses_resolved_area_name(monkeypatch):
+    def fake_urlopen(req, timeout=2.5):
+        return _FakeHttpResponse(
+            {
+                "address": {
+                    "neighbourhood": "Mărăști",
+                    "city": "Cluj-Napoca",
+                }
+            }
+        )
+
+    monkeypatch.setattr(dispatch.urllib.request, "urlopen", fake_urlopen)
+
+    text = dispatch.format_announcement(
+        {
+            "zone_id": "46.77_23.62",
+            "lat": 46.7712,
+            "lon": 23.6236,
+            "max_pga": 4.25,
+            "triggered_devices": ["ios-01", "android-68"],
+        }
+    )
+    assert "near the Mărăști area of Cluj-Napoca." in text
+    assert "4.25 meters per second squared" in text
+    assert "confirmed by 2 sensors" in text
+
+
+def test_build_dispatch_text_falls_back_to_coordinates_on_geocode_error(monkeypatch):
+    def fake_urlopen(req, timeout=2.5):
+        raise urllib.error.URLError("timeout")
+
+    monkeypatch.setattr(dispatch.urllib.request, "urlopen", fake_urlopen)
+
     text = dispatch.build_dispatch_text(
         {
             "zone_id": "46.77_23.62",
@@ -49,21 +125,13 @@ def test_twilio_dispatch_posts_twiml_with_basic_auth(monkeypatch):
 
     captured = {}
 
-    class FakeResp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def read(self):
-            return json.dumps({"sid": "CA123", "status": "queued"}).encode("utf-8")
-
     def fake_urlopen(req, timeout=10):
+        if "nominatim.openstreetmap.org" in req.full_url:
+            return _FakeHttpResponse({"address": {"suburb": "Gheorgheni", "city": "Cluj-Napoca"}})
         captured["url"] = req.full_url
         captured["auth"] = req.get_header("Authorization")
         captured["data"] = req.data.decode("utf-8")
-        return FakeResp()
+        return _FakeHttpResponse({"sid": "CA123", "status": "queued"})
 
     monkeypatch.setattr(dispatch.urllib.request, "urlopen", fake_urlopen)
 
@@ -77,6 +145,7 @@ def test_twilio_dispatch_posts_twiml_with_basic_auth(monkeypatch):
     assert "Accounts/AC_TEST_SID/Calls.json" in captured["url"]
     assert captured["auth"].startswith("Basic ")
     assert "Twiml=" in captured["data"]
+    assert "Gheorgheni" in captured["data"]
 
 
 def test_aws_voice_dispatch_calls_pinpoint_sms_voice_v2():
