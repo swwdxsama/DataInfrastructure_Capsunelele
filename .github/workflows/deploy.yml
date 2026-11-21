@@ -3,6 +3,7 @@ name: Deploy
 # La merge pe main: CI -> Terraform (backend + infrastructura) -> dashboard pe S3/CloudFront.
 # Acces AWS prin OIDC (fara chei statice). Necesita in GitHub:
 #   Secrets:   AWS_ROLE_ARN      (output deploy_role_arn din infrastructure/bootstrap)
+#   Secrets:   ALERT_EMAIL       (optional: adresa abonata la alertele SNS; date personale -> nu in repo)
 #   Variables: TF_STATE_BUCKET   (output state_bucket din infrastructure/bootstrap)
 on:
   push:
@@ -35,6 +36,8 @@ jobs:
     defaults:
       run:
         working-directory: infrastructure
+    env:
+      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
     outputs:
       api_url: ${{ steps.out.outputs.api_url }}
       dashboard_bucket: ${{ steps.out.outputs.dashboard_bucket }}
