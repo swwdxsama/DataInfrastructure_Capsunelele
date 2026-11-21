@@ -28,6 +28,18 @@ variable "github_repo" {
   default     = "swwdxsama/DataInfrastructure_Capsunelele"
 }
 
+# GitHub poate trimite sub-ul cu ID-urile numerice (repo:owner@ID/repo@ID:...); acceptam ambele formate.
+# ID-urile sunt publice: https://api.github.com/repos/<owner>/<repo> -> owner.id si id
+variable "github_owner_id" {
+  type    = string
+  default = "189281215"
+}
+
+variable "github_repo_id" {
+  type    = string
+  default = "1465638439"
+}
+
 variable "deploy_branch" {
   description = "Singurul branch de pe care GitHub Actions poate prelua rolul"
   type        = string
@@ -46,7 +58,13 @@ locals {
   account_id   = data.aws_caller_identity.current.account_id
   state_bucket = "capsunelele-tfstate-${local.account_id}"
   oidc_url     = "token.actions.githubusercontent.com"
-  oidc_arn     = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : "arn:aws:iam::${local.account_id}:oidc-provider/${local.oidc_url}"
+  repo_owner   = split("/", var.github_repo)[0]
+  repo_name    = split("/", var.github_repo)[1]
+  allowed_subjects = [
+    "repo:${var.github_repo}:ref:refs/heads/${var.deploy_branch}",
+    "repo:${local.repo_owner}@${var.github_owner_id}/${local.repo_name}@${var.github_repo_id}:ref:refs/heads/${var.deploy_branch}",
+  ]
+  oidc_arn = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : "arn:aws:iam::${local.account_id}:oidc-provider/${local.oidc_url}"
 }
 
 # ---------------------------------------------------------------- starea Terraform
@@ -114,7 +132,7 @@ resource "aws_iam_role" "github_deploy" {
       Condition = {
         StringEquals = {
           "${local.oidc_url}:aud" = "sts.amazonaws.com"
-          "${local.oidc_url}:sub" = "repo:${var.github_repo}:ref:refs/heads/${var.deploy_branch}"
+          "${local.oidc_url}:sub" = local.allowed_subjects # lista = oricare dintre valori
         }
       }
     }]

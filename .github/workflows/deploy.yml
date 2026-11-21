@@ -83,12 +83,11 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # Fara "environment:": un job legat de un environment primeste alt sub OIDC
+    # (repo:...:environment:<nume>), pe care rolul de deploy nu il accepta.
     defaults:
       run:
         working-directory: src/web/QuakeMeUp
-    environment:
-      name: production
-      url: ${{ needs.infra.outputs.dashboard_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -121,3 +120,7 @@ jobs:
 
       - name: Invalidate CloudFront
         run: aws cloudfront create-invalidation --distribution-id "${{ needs.infra.outputs.distribution_id }}" --paths "/index.html" "/"
+
+      - name: Summary
+        run: |
+          echo "Dashboard: ${{ needs.infra.outputs.dashboard_url }}" >> "$GITHUB_STEP_SUMMARY"
