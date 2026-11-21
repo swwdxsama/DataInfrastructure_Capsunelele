@@ -30,7 +30,7 @@ flowchart LR
 ```
 
 ### Key Technical Highlights
-- **Edge Collection (`src/mobile/App.tsx`)**: Samples accelerometer (`m/s²`, converted from `g × 9.81`), gyroscope (`rad/s`), and foreground GPS at 20 Hz, packing 40-sample (2-second) columnar Contract v1 batches with `device_id`, `event_type`, `value`, `unit`, and UTC `timestamp`. Includes a bounded 20-batch retry queue (drops HTTP `400`, retries `5xx`/timeouts preserving `t0` for idempotent deduplication), `AbortController` timeouts, and `expo-keep-awake`.
+- **Edge Collection (`src/mobile/App.tsx`)**: Samples accelerometer (`m/s²`, converted from `g × 9.81`), gyroscope (`rad/s`), and foreground GPS at 20 Hz, packing 40-sample (2-second) columnar Contract v1 batches with `device_id`, `event_type`, `value`, `unit`, and UTC `timestamp`. Includes an indoor GPS fallback (tagged with `accuracy: 999` until real GPS locks), optional `x-api-key` header support, a bounded 20-batch retry queue (drops HTTP `400`/`401`, retries `5xx`/timeouts preserving `t0` for idempotent deduplication), `AbortController` timeouts, and `expo-keep-awake`.
 - **Signal Processing & False-Positive Rejection (`src/backend/`)**:
   - `preprocess.py`: Schema/freshness validation, unit normalization, physical bounds check, uniform 20 Hz resampling, gap detection, gravity removal, and 1 Hz high-pass filtering.
   - `process.py`: Per-device arming gate (`DeviceState`), 1-second windowing, RMS, PGA, variance, pure-Python DFT dominant frequency (1–10 Hz), STA/LTA ratio, and gyroscope/tilt rejection to filter out pocket/hand movement.
@@ -52,7 +52,7 @@ DataInfrastructure_Capsunelele/
 │   ├── backend/             # Pure-Python 3.12 AWS Lambda modules (ingest, preprocess, process, correlate, dispatch)
 │   ├── mobile/              # Cross-platform Expo React Native (TypeScript) sensor collector app
 │   └── web/QuakeMeUp/       # React + Vite + TypeScript live seismic dashboard
-├── tests/                   # Automated pytest test suite (50 tests)
+├── tests/                   # Automated pytest test suite (51 tests)
 └── tools/                   # Offline batch export & replay utilities
 ```
 
@@ -105,7 +105,7 @@ cp .env.example .env.local
    ```
 2. Configure GitHub Repository **Settings → Secrets and variables → Actions**:
    - **Variables**: `TF_STATE_BUCKET` (`capsunelele-tfstate-<account_id>`)
-   - **Secrets**: `AWS_ROLE_ARN`, `ALERT_EMAIL` *(optional)*, `DISPATCH_TO_NUMBER` *(optional)*, `DISPATCH_FROM_NUMBER` *(optional)*, `TWILIO_ACCOUNT_SID` *(optional)*, `TWILIO_AUTH_TOKEN` *(optional)*
+   - **Secrets**: `AWS_ROLE_ARN`, `INGEST_API_KEY` *(optional `x-api-key` enforced on `POST /telemetry`)*, `ALERT_EMAIL` *(optional)*, `DISPATCH_TO_NUMBER` *(optional)*, `DISPATCH_FROM_NUMBER` *(optional)*, `TWILIO_ACCOUNT_SID` *(optional)*, `TWILIO_AUTH_TOKEN` *(optional)*
 3. Push to `main` (or trigger **Actions → Deploy**) to run CI, `terraform apply`, and deploy the dashboard to S3 + CloudFront automatically.
 
 ---
@@ -131,7 +131,7 @@ npx expo start --tunnel ngrok
 
 ### Run Automated Tests & Linters
 ```bash
-# Backend lint & unit/integration tests (50 tests)
+# Backend lint & unit/integration tests (51 tests)
 ruff check .
 pytest -v
 
