@@ -1,8 +1,13 @@
-infrastructure/.terraform/
-infrastructure/*.tfstate*
+**/.terraform/
+**/*.tfstate*
+**/tfplan
 infrastructure/ingest.zip
 .terraform.lock.hcl
 __pycache__/
 
 .claude/
 AGENTS.md
+
+.env
+.env.*
+!.env.example
