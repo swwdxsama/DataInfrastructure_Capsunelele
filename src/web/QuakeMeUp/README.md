@@ -58,11 +58,11 @@ API Gateway trebuie să permită CORS pentru originea dashboard-ului.
 
 1. **Valori curente** (sus, fără scroll): accelerația maximă din rețea acum (normal / ridicat de la 50% din prag / alertă de la prag), ultimul cutremur cu intensitatea estimată, locația lui, ora ultimei citiri stocate și vechimea ei.
 2. **Istoric**: graficul accelerației pe 5 min / 1 h / 24 h / 7 zile cu cutremurele marcate, tabelul sortabil al cutremurelor, harta cu senzorii și epicentrele.
-3. **Starea sistemului**: senzori online, API (din polling), baza de date (dedusă), ultimul răspuns, ingestie. Fiecare widget are stări de încărcare, gol și eroare.
+3. **Starea sistemului**: o bară în formă de flux, Senzori → DynamoDB → API backend, cu liniile animate cât timp datele circulă. Fiecare widget are stări de încărcare, gol și eroare.
 
 **Intensitatea** e estimată din PGA (scara Mercalli, Wald et al. 1999), în `src/lib/intensity.ts`. Backend-ul nu trimite magnitudine.
 
-**Starea DynamoDB** e dedusă (nu există endpoint de health): `/status` răspunde → citirile merg; `receivedAt` recent → scrierile merg. Regulile sunt în `src/lib/health.ts`.
+**Starea DynamoDB** vine din răspunsul API: `503 { "error": "db_unavailable" }` → baza de date e căzută; răspuns reușit → citirile merg; citiri noi în ultimele 30 s → scrierile merg. Regulile sunt în `src/lib/pipeline.ts` (`derivePipelineStatus`), cu teste în `pipeline.test.ts` (`npm test`).
 
 ## Date mock
 

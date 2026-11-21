@@ -1,131 +1,162 @@
 import type { ReactNode } from 'react'
-import { POLL_INTERVAL_MS } from '../config'
 import { useNow } from '../hooks/useNow'
 import type { DashboardView } from '../lib/derive'
-import { formatAgo, formatElapsed, formatNumber, formatTime } from '../lib/format'
-import { apiHealth, dbHealth, devicesHealth, type HealthReport } from '../lib/health'
+import { derivePipelineStatus, type PipelineNode, type SensorsNode } from '../lib/pipeline'
 import type { SystemStatus as Status } from '../types'
-import { HealthBadge } from './StatusBadge'
 import './SystemStatus.css'
 
 interface Props {
   status: Status | null
   view: DashboardView | null
   apiConfigured: boolean
-  /** Polling state of the snapshot. */
-  updatedAt: number | null
   failingSince: number | null
   error: Error | null
 }
 
-const NONE = '–'
-
-/** Requirement 3: is the pipeline healthy, and how fresh is what we see? */
-export function SystemStatus({ status, view, apiConfigured, updatedAt, failingSince, error }: Props) {
-  // Re-evaluated every second, so "offline after 15 s" flips without waiting for the next poll.
+/** Requirement 3: is the pipeline healthy? Senzori → DynamoDB → API backend. */
+export function SystemStatus({ status, view, apiConfigured, failingSince, error }: Props) {
+  // Re-evaluated every second, so "fără răspuns de X s" keeps counting between polls.
   const now = useNow(1000)
-  const api = apiHealth({ apiConfigured, hasData: status !== null, error, failingSince, now })
-  const db = dbHealth({ status, api, serverNow: view?.serverNow ?? null, lastWriteAt: view?.lastReceivedAt ?? null })
-  const devices = devicesHealth(status)
+  const p = derivePipelineStatus({
+    apiConfigured,
+    status,
+    lastReceivedAt: view?.lastReceivedAt ?? null,
+    error,
+    failingSince,
+    now,
+  })
 
   return (
-    <section className="system" aria-labelledby="h-system">
+    <section className="pipeline" aria-labelledby="h-system">
       <h2 id="h-system" className="visually-hidden">
         Starea sistemului
       </h2>
-      <dl className="system-items">
-        <Item label="Senzori online" report={devices}>
-          {status ? (
-            <>
-              <strong>{status.devicesOnline}</strong>
-              <span className="system-of"> / {status.devicesTotal}</span>
-              {status.devicesArmed != null && status.devicesUnarmed != null && (
-                <span className="system-arming">
-                  <span data-arm="armed">{status.devicesArmed} armate</span>
-                  {' · '}
-                  <span data-arm="unarmed">{status.devicesUnarmed} nearmate</span>
-                </span>
-              )}
-            </>
-          ) : (
-            <strong>{NONE}</strong>
-          )}
-        </Item>
-
-        <Item label="API backend" report={api} />
-
-        <Item label="Bază de date (DynamoDB)" report={db} note="dedus din răspunsul API și ora ultimei citiri stocate" />
-
-        <Item label="Ultimul răspuns API">
-          <strong>{updatedAt ? formatAgo(updatedAt, now) : NONE}</strong>
-          {updatedAt && <span className="system-detail">
-              la {formatTime(updatedAt)} UTC, la fiecare {POLL_INTERVAL_MS / 1000} s
-            </span>}
-        </Item>
-
-        <Item label="Ingestie">
-          {status ? (
-            <>
-              <strong>{formatNumber(status.messagesPerSecond, 1)}</strong>
-              <span className="system-of"> msg/s</span>
-              <span className="system-detail">
-                {status.latencyP50Ms !== null && status.latencyP95Ms !== null
-                  ? `latență ${Math.round(status.latencyP50Ms)} / ${Math.round(status.latencyP95Ms)} ms (p50 / p95)`
-                  : 'latență nemăsurată de API'}
-              </span>
-            </>
-          ) : (
-            <strong>{NONE}</strong>
-          )}
-        </Item>
-      </dl>
+      <div className="pipeline-flow">
+        <Node
+          label="Senzori"
+          node={p.sensors}
+          icon={<PhoneIcon />}
+          value={<SensorsValue node={p.sensors} />}
+          detail={p.sensors.arming && <ArmingDetail {...p.sensors.arming} />}
+        />
+        <Link active={p.links.sensorsToDb} />
+        <Node label="DynamoDB" node={p.db} icon={<DatabaseIcon />} />
+        <Link active={p.links.dbToApi} />
+        <Node label="API backend" node={p.api} icon={<ServerIcon />} />
+      </div>
 
       {!apiConfigured && (
-        <p className="system-notice" data-kind="setup">
+        <p className="pipeline-notice">
           API-ul nu este configurat. Setează VITE_EVENTS_URL în .env.local ca să vezi date.
-        </p>
-      )}
-      {apiConfigured && error && failingSince && (
-        <p className="system-notice" data-kind="error" role="alert">
-          Nu primim date noi de {formatElapsed(failingSince, now)}. {error.message} Reîncercăm automat
-          {status ? '; valorile de mai jos sunt ultimele primite.' : '.'}
         </p>
       )}
     </section>
   )
 }
 
-function Item({
+function Node({
   label,
-  report,
-  note,
-  children,
+  node,
+  icon,
+  value,
+  detail,
 }: {
   label: string
-  report?: HealthReport
-  note?: string
-  children?: ReactNode
+  node: PipelineNode
+  icon: ReactNode
+  /** Richer markup for the value or detail; the plain text from `node` otherwise. */
+  value?: ReactNode
+  detail?: ReactNode
 }) {
   return (
-    <div className="system-item">
-      <dt>
-        {label}
-        {note && (
-          <span className="system-note" title={note}>
-            {' '}
-            (dedus)
-          </span>
-        )}
-      </dt>
-      <dd>
-        {children}
-        {report && (
-          <span className="system-health">
-            <HealthBadge health={report.state} />
-            {report.detail && <span className="system-detail">{report.detail}</span>}
-          </span>
-        )}
-      </dd>
+    <div className="pipeline-node" role="group" aria-label={node.ariaLabel} data-tone={node.tone} title={node.title}>
+      <span className="pipeline-circle" aria-hidden="true">
+        {icon}
+        <span className="pipeline-badge" />
+      </span>
+      <span className="pipeline-label">{label}</span>
+      <span className="pipeline-value">{value ?? node.value}</span>
+      <span className="pipeline-detail">{detail || node.detail}</span>
     </div>
+  )
+}
+
+function SensorsValue({ node }: { node: SensorsNode }) {
+  return (
+    <>
+      <strong>{node.online ?? '?'}</strong>
+      <span className="pipeline-of"> / {node.total ?? '?'}{node.online !== null && ' online'}</span>
+    </>
+  )
+}
+
+function ArmingDetail({ armed, unarmed }: { armed: number; unarmed: number }) {
+  return (
+    <>
+      <span data-arm="armed">{armed} armate</span>
+      {' · '}
+      <span data-arm="unarmed">{unarmed} nearmate</span>
+    </>
+  )
+}
+
+function Link({ active }: { active: boolean }) {
+  return (
+    <span className="pipeline-link" data-active={active || undefined} aria-hidden="true">
+      {active && (
+        <>
+          <span className="pipeline-dot" />
+          <span className="pipeline-dot" />
+          <span className="pipeline-dot" />
+        </>
+      )}
+    </span>
+  )
+}
+
+function Icon({ children }: { children: ReactNode }) {
+  return (
+    <svg
+      className="pipeline-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {children}
+    </svg>
+  )
+}
+
+function PhoneIcon() {
+  return (
+    <Icon>
+      <rect x="6.5" y="2.5" width="11" height="19" rx="2.5" />
+      <path d="M11 18h2" />
+    </Icon>
+  )
+}
+
+function DatabaseIcon() {
+  return (
+    <Icon>
+      <ellipse cx="12" cy="5.5" rx="7.5" ry="3" />
+      <path d="M4.5 5.5v13c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3v-13" />
+      <path d="M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3" />
+    </Icon>
+  )
+}
+
+function ServerIcon() {
+  return (
+    <Icon>
+      <rect x="3.5" y="3.5" width="17" height="7" rx="1.5" />
+      <rect x="3.5" y="13.5" width="17" height="7" rx="1.5" />
+      <path d="M7.5 7h.01M7.5 17h.01" />
+    </Icon>
   )
 }

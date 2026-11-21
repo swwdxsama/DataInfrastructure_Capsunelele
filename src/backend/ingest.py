@@ -42,6 +42,15 @@ except ImportError:
             super().__init__(str(error_response))
             self.response = error_response or {}
 
+try:
+    from botocore.exceptions import BotoCoreError
+except ImportError:
+    class BotoCoreError(Exception):
+        pass
+
+# DynamoDB unreachable or refusing the request (throttling, missing table, network).
+DB_ERRORS = (ClientError, BotoCoreError)
+
 
 _events_table = None
 _alerts_table = None
@@ -847,6 +856,13 @@ def _handle_get_devices():
     return _response(200, {"devices": devices})
 
 
+GET_ROUTES = {
+    "/events": _handle_get_events,
+    "/alerts": _handle_get_alerts,
+    "/devices": _handle_get_devices,
+}
+
+
 def lambda_handler(event, context):
     http_ctx = event.get("requestContext", {}).get("http", {})
     method = http_ctx.get("method", "GET").upper()
@@ -855,12 +871,12 @@ def lambda_handler(event, context):
     try:
         if method == "POST" and path.rstrip("/") == "/telemetry":
             return _handle_post_telemetry(event)
-        if method == "GET" and path.rstrip("/") == "/events":
-            return _handle_get_events()
-        if method == "GET" and path.rstrip("/") == "/alerts":
-            return _handle_get_alerts()
-        if method == "GET" and path.rstrip("/") == "/devices":
-            return _handle_get_devices()
+        if method == "GET" and path.rstrip("/") in GET_ROUTES:
+            try:
+                return GET_ROUTES[path.rstrip("/")]()
+            except DB_ERRORS:
+                # The dashboard tells "database down" apart from "API down" by this body.
+                return _response(503, {"error": "db_unavailable"})
         return _response(404, {"error": f"Route not found: {method} {path}"})
     except Exception as e:
         return _response(500, {"error": str(e)})
