@@ -806,7 +806,7 @@ def _handle_get_events():
 def _handle_get_alerts():
     items = _scan_table(_get_alerts_table())
     items.sort(key=lambda x: str(x.get("timestamp", "")), reverse=True)
-    return _response(200, {"alerts": items[:20]})
+    return _response(200, {"alerts": items[:10]})
 
 
 def _handle_get_devices():

@@ -25,11 +25,6 @@ export function formatAccel(value: number, withUnit = true) {
   return withUnit ? `${n} ${ACCEL_UNIT}` : n
 }
 
-const percent = new Intl.NumberFormat(LOCALE, { style: 'percent', maximumFractionDigits: 0 })
-export function formatPercent(fraction: number) {
-  return percent.format(fraction)
-}
-
 const timeUTC = new Intl.DateTimeFormat(LOCALE, {
   timeZone: 'UTC',
   hour: '2-digit',

@@ -38,7 +38,8 @@ export default function DeviceMap({ devices, stateById, selectedId, activeEvent,
         bounds={ROMANIA}
         boundsOptions={{ padding: [4, 4] }}
         zoomSnap={0.25}
-        scrollWheelZoom={false}
+        scrollWheelZoom
+        wheelPxPerZoomLevel={120}
         className="device-map-canvas"
         attributionControl
       >

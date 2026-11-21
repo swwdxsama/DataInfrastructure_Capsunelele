@@ -18,6 +18,7 @@ import type {
   Telemetry,
   Trigger,
 } from '../types'
+import { lookupPlace } from '../lib/geocode'
 import { fetchJson } from './fetchJson'
 import type { DashboardApi } from './types'
 
@@ -46,6 +47,15 @@ import type { DashboardApi } from './types'
  * Only armed phones write to /events, so /devices is also the only place an
  * unarmed (but connected) phone shows up. If /devices is missing or fails, the
  * dashboard keeps working without states.
+ *
+ * Confirmed earthquakes are stored by the backend and come from GET /alerts,
+ * so the list survives a page refresh:
+ *
+ *   GET /alerts  →  { "alerts": [{ "zone_id", "timestamp", "t_ms", "t_onset_ms",
+ *                     "lat", "lon", "triggered_devices", "max_pga", ... }] }
+ *
+ * Earthquakes detected in the browser are still shown while they have no
+ * stored alert yet (an earthquake under way, or a backend without /alerts).
  */
 
 interface RawLocation {
@@ -60,6 +70,8 @@ interface RawReading {
   timestamp?: string
   value?: number | string
   pga?: number | string
+  gyro_rms?: number | string | null
+  gyro_peak?: number | string | null
   lat?: number | string | null
   lon?: number | string | null
   metadata?: {
@@ -78,6 +90,17 @@ interface RawDeviceState {
   updated_at_ms?: number
 }
 
+interface RawAlert {
+  zone_id?: string
+  timestamp?: string
+  t_ms?: number | string
+  t_onset_ms?: number | string
+  lat?: number | string | null
+  lon?: number | string | null
+  triggered_devices?: string[]
+  max_pga?: number | string
+}
+
 interface DeviceState {
   arming: Arming
   /** Server clock of the last batch, epoch ms. */
@@ -89,10 +112,68 @@ interface Reading {
   t: number
   /** Dynamic acceleration, gravity removed. */
   accel: number
+  gyro: Telemetry['gyro']
+}
+
+function toNumber(v: number | string | null | undefined): number | null {
+  if (v == null || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
 }
 
 /** Readings older than this count as finished when deciding if an earthquake is still active. */
 const QUAKE_ACTIVE_MS = 30_000
+
+/** A browser-detected earthquake and a stored alert this close in time are the same earthquake. */
+const SAME_QUAKE_MS = 60_000
+
+function alertToEvent(raw: RawAlert, now: number): Event | null {
+  const t = toNumber(raw.t_ms) ?? (raw.timestamp ? Date.parse(raw.timestamp) : NaN)
+  if (t === null || !Number.isFinite(t)) return null
+  const onset = toNumber(raw.t_onset_ms)
+  const start = onset !== null && onset <= t ? onset : t
+  const lat = toNumber(raw.lat)
+  const lon = toNumber(raw.lon)
+  const deviceIds = raw.triggered_devices ?? []
+  const active = now - t < QUAKE_ACTIVE_MS
+  return {
+    id: `a-${raw.zone_id ?? 'zone'}-${t}`,
+    status: active ? 'active' : 'ended',
+    startedAt: new Date(start).toISOString(),
+    endedAt: active ? null : new Date(t).toISOString(),
+    deviceIds,
+    triggerCount: deviceIds.length,
+    peakAccel: toNumber(raw.max_pga) ?? 0,
+    epicenter: lat !== null && lon !== null ? { lat, lon } : null,
+    region: null,
+  }
+}
+
+/**
+ * Stored alerts first; a browser-detected earthquake replaces the alert it matches
+ * (it has live status and links to its triggers) and is kept on its own otherwise.
+ */
+function mergeEvents(stored: Event[], local: Event[]): Event[] {
+  const merged = [...stored]
+  for (const e of local) {
+    const t = Date.parse(e.startedAt)
+    const i = merged.findIndex(
+      (s) => s.id.startsWith('a-') && Math.abs(Date.parse(s.startedAt) - t) <= SAME_QUAKE_MS,
+    )
+    if (i === -1) {
+      merged.push(e)
+      continue
+    }
+    const s = merged[i]
+    merged[i] = {
+      ...e,
+      deviceIds: [...new Set([...e.deviceIds, ...s.deviceIds])],
+      peakAccel: Math.max(e.peakAccel, s.peakAccel),
+      epicenter: e.epicenter ?? s.epicenter,
+    }
+  }
+  return merged.sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 10)
+}
 
 export function createEventsApi(url: string): DashboardApi {
   const readings = new Map<string, Reading>()
@@ -101,6 +182,20 @@ export function createEventsApi(url: string): DashboardApi {
   /** Null until GET /devices answers; stays null if the backend has no such route. */
   let deviceStates: Map<string, DeviceState> | null = null
   const devicesUrl = /\/events\/?$/.test(url) ? url.replace(/\/events\/?$/, '/devices') : null
+  const alertsUrl = /\/events\/?$/.test(url) ? url.replace(/\/events\/?$/, '/alerts') : null
+  /** Last answer from GET /alerts; empty until it answers or if the route is missing. */
+  let alerts: RawAlert[] = []
+
+  async function pollAlerts(signal: AbortSignal) {
+    if (!alertsUrl) return
+    try {
+      const body = await fetchJson<{ alerts?: RawAlert[] }>(alertsUrl, signal, 'GET /alerts')
+      alerts = body.alerts ?? []
+    } catch (err) {
+      if (signal.aborted) throw err
+      // Keep the last known alerts; browser detection still covers new earthquakes.
+    }
+  }
 
   async function pollStates(signal: AbortSignal) {
     if (!devicesUrl) return
@@ -130,6 +225,7 @@ export function createEventsApi(url: string): DashboardApi {
     const [body] = await Promise.all([
       fetchJson<{ events?: RawReading[] } | RawReading[]>(url, signal, 'GET /events'),
       pollStates(signal),
+      pollAlerts(signal),
     ])
     const items = Array.isArray(body) ? body : (body.events ?? [])
 
@@ -145,8 +241,11 @@ export function createEventsApi(url: string): DashboardApi {
           : NaN
       if (!deviceId || !Number.isFinite(t) || !Number.isFinite(accel)) continue
 
+      const gyroRms = toNumber(raw.gyro_rms)
+      const gyro = gyroRms !== null ? { rms: gyroRms, peak: toNumber(raw.gyro_peak) } : null
+
       const key = `${deviceId}|${t}`
-      if (!readings.has(key)) readings.set(key, { deviceId, t, accel })
+      if (!readings.has(key)) readings.set(key, { deviceId, t, accel, gyro })
       if (!firstSeen.has(deviceId) || t < firstSeen.get(deviceId)!) firstSeen.set(deviceId, t)
 
       const metaLoc = raw.metadata?.location
@@ -198,7 +297,9 @@ export function createEventsApi(url: string): DashboardApi {
         kind: 'phone',
         model: null,
         location,
-        locality: location ? `${location.lat.toFixed(2)}°, ${location.lon.toFixed(2)}°` : 'fără GPS',
+        locality: location
+          ? (lookupPlace(location) ?? `${location.lat.toFixed(2)}°, ${location.lon.toFixed(2)}°`)
+          : 'fără GPS',
         online: seenAt > 0 && now - seenAt <= ONLINE_WITHIN_MS,
         lastSeenAt: seenAt > 0 ? new Date(seenAt).toISOString() : null,
         registeredAt: new Date(firstSeen.get(id) ?? (seenAt || now)).toISOString(),
@@ -211,13 +312,18 @@ export function createEventsApi(url: string): DashboardApi {
         receivedAt: null,
         accel: null,
         accelMagnitude: last.accel,
-        gyro: null,
-        battery: null,
+        gyro: last.gyro,
         gps: loc ? { lat: loc.lat, lon: loc.lon, accuracy: loc.accuracy ?? null } : null,
       })
     }
 
-    const { triggers, events } = detect(all, now)
+    const detected = detect(all, now)
+    const stored = alerts.map((a) => alertToEvent(a, now)).filter((e) => e !== null)
+    const { triggers } = detected
+    const events = mergeEvents(stored, detected.events).map((e) => ({
+      ...e,
+      region: e.region ?? (e.epicenter ? lookupPlace(e.epicenter) : null),
+    }))
     const recentCount = all.filter((r) => r.t > now - 60_000).length
     const online = devices.filter((d) => d.online)
     const status: SystemStatus = {

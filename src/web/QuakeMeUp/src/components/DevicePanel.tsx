@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { api } from '../api'
 import { ACCEL_UNIT, HISTORY_WINDOW_S, POLL_INTERVAL_MS } from '../config'
 import { usePolling } from '../hooks/usePolling'
-import { vectorNorm, type DeviceState } from '../lib/derive'
+import type { DeviceState } from '../lib/derive'
 import {
   deviceKindLabel,
   formatAgo,
@@ -10,7 +10,6 @@ import {
   formatDateTime,
   formatLongDate,
   formatNumber,
-  formatPercent,
   formatTime,
 } from '../lib/format'
 import type { Device, Event, Telemetry, Trigger, Vector3 } from '../types'
@@ -116,24 +115,22 @@ export function DevicePanel({
           </p>
           <dl className="device-panel-grid">
             <Vector label={`Accelerometru (${ACCEL_UNIT})`} v={telemetry.accel} digits={3} />
-            <Vector
-              label="Giroscop (rad/s)"
-              v={telemetry.gyro}
-              digits={4}
-              total={telemetry.gyro ? vectorNorm(telemetry.gyro) : undefined}
-            />
-            <div className="device-panel-field">
-              <dt>Baterie</dt>
-              <dd>
-                {telemetry.battery ? (
-                  <>
-                    {formatPercent(telemetry.battery.level)}
-                    <span className="secondary">{telemetry.battery.charging ? ' se încarcă' : ' pe baterie'}</span>
-                  </>
-                ) : (
-                  <span className="secondary">nu e raportată</span>
-                )}
-              </dd>
+            <div className="device-panel-field device-panel-wide">
+              <dt>Giroscop (rad/s)</dt>
+              {telemetry.gyro ? (
+                <dd className="device-panel-vector">
+                  <span>
+                    <span className="secondary">RMS</span> {formatNumber(telemetry.gyro.rms, 4)}
+                  </span>
+                  {telemetry.gyro.peak !== null && (
+                    <span>
+                      <span className="secondary">vârf</span> {formatNumber(telemetry.gyro.peak, 4)}
+                    </span>
+                  )}
+                </dd>
+              ) : (
+                <dd className="secondary">nu e raportat</dd>
+              )}
             </div>
             <div className="device-panel-field">
               <dt>Latență mesaj</dt>

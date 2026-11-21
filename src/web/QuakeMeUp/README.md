@@ -29,7 +29,7 @@ Dashboard-ul îl apelează cu `fetch()` la fiecare 2 secunde (`POLL_INTERVAL_MS`
 - depășirile de prag (≥ 1,0 m/s²) și cutremurele (≥ 3 dispozitive în 10 s)
 - istoricul, dintr-un buffer în memorie de 2 ore care se umple cât timp pagina e deschisă (endpoint-ul dă doar 50 de citiri)
 
-Pragurile sunt în `src/config.ts`. Câmpurile pe care endpoint-ul nu le trimite (giroscop, baterie, latență) apar ca „nu e raportat”.
+Pragurile sunt în `src/config.ts`. Giroscopul apare ca RMS și vârf pe ultima fereastră procesată (`gyro_rms`, `gyro_peak`), adică valorile după care backend-ul armează sau dezarmează telefonul. Latența, pe care endpoint-ul nu o trimite, apare ca „nu e raportată”.
 
 ## Conectare la API-ul REST complet (viitor)
 
