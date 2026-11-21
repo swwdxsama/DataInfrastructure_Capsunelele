@@ -41,17 +41,43 @@ interface LocationReading {
   accuracy: number | null;
 }
 
+interface PackedSensorBatch {
+  t0: number;
+  t: number[];
+  x: number[];
+  y: number[];
+  z: number[];
+}
+
 interface TelemetryPayload {
-  device_id: string;
+  schema_version: 1;
   event_type: 'raw_sensor_batch';
+  device_id: string;
+  platform: string;
+  sent_at: number;
   timestamp: string;
   value: number;
   unit: 'm/s^2';
-  metadata: {
-    platform: string;
-    location: LocationReading | null;
-    accelerometer: SensorSample[];
-    gyroscope: SensorSample[];
+  gyro_unit: 'rad/s';
+  sample_rate_hz: number;
+  location: LocationReading | null;
+  accelerometer: PackedSensorBatch;
+  gyroscope: PackedSensorBatch;
+}
+
+/**
+ * Packs timestamped samples into parallel arrays.
+ * t contains millisecond offsets relative to t0, reducing payload size.
+ */
+function packSensorSamples(samples: SensorSample[], fallbackT0: number): PackedSensorBatch {
+  const t0 = samples.length > 0 ? samples[0].t : fallbackT0;
+
+  return {
+    t0,
+    t: samples.map((sample) => sample.t - t0),
+    x: samples.map((sample) => sample.x),
+    y: samples.map((sample) => sample.y),
+    z: samples.map((sample) => sample.z),
   };
 }
 
@@ -205,18 +231,22 @@ export default function App() {
           )
           : 0;
 
+      const sentAt = Date.now();
+
       const newPayload: TelemetryPayload = {
-        device_id: deviceIdRef.current.trim() || 'unknown-device',
+        schema_version: 1,
         event_type: 'raw_sensor_batch',
-        timestamp: new Date().toISOString(),
+        device_id: deviceIdRef.current.trim() || 'unknown-device',
+        platform: Platform.OS,
+        sent_at: sentAt,
+        timestamp: new Date(sentAt).toISOString(),
         value: magnitude,
         unit: 'm/s^2',
-        metadata: {
-          platform: Platform.OS,
-          location: latestLocationRef.current,
-          accelerometer: accelBatch,
-          gyroscope: gyroBatch,
-        },
+        gyro_unit: 'rad/s',
+        sample_rate_hz: 1000 / SAMPLE_INTERVAL_MS,
+        location: latestLocationRef.current,
+        accelerometer: packSensorSamples(accelBatch, sentAt),
+        gyroscope: packSensorSamples(gyroBatch, sentAt),
       };
 
       pendingBatches.push(newPayload);
