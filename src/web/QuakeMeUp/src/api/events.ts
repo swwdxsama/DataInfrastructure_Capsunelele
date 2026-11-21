@@ -50,6 +50,9 @@ interface RawReading {
   deviceId?: string
   timestamp?: string
   value?: number | string
+  pga?: number | string
+  lat?: number | string | null
+  lon?: number | string | null
   metadata?: {
     platform?: string
     location?: RawLocation | null
@@ -78,15 +81,29 @@ export function createEventsApi(url: string): DashboardApi {
     for (const raw of items) {
       const deviceId = raw.device_id ?? raw.deviceId
       const t = raw.timestamp ? Date.parse(raw.timestamp) : NaN
-      const value = Number(raw.value)
-      if (!deviceId || !Number.isFinite(t) || !Number.isFinite(value)) continue
+      const pga = raw.pga != null ? Number(raw.pga) : NaN
+      const value = raw.value != null ? Number(raw.value) : NaN
+      const accel = Number.isFinite(pga)
+        ? pga
+        : Number.isFinite(value)
+          ? Math.abs(value - GRAVITY_MS2)
+          : NaN
+      if (!deviceId || !Number.isFinite(t) || !Number.isFinite(accel)) continue
 
       const key = `${deviceId}|${t}`
-      if (!readings.has(key)) readings.set(key, { deviceId, t, accel: Math.abs(value - GRAVITY_MS2) })
+      if (!readings.has(key)) readings.set(key, { deviceId, t, accel })
       if (!firstSeen.has(deviceId) || t < firstSeen.get(deviceId)!) firstSeen.set(deviceId, t)
 
-      const loc = raw.metadata?.location
-      if (loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lon)) lastLocation.set(deviceId, loc)
+      const metaLoc = raw.metadata?.location
+      const topLat = raw.lat != null ? Number(raw.lat) : NaN
+      const topLon = raw.lon != null ? Number(raw.lon) : NaN
+      const loc: RawLocation | null =
+        metaLoc && Number.isFinite(metaLoc.lat) && Number.isFinite(metaLoc.lon)
+          ? metaLoc
+          : Number.isFinite(topLat) && Number.isFinite(topLon)
+            ? { lat: topLat, lon: topLon }
+            : null
+      if (loc) lastLocation.set(deviceId, loc)
     }
 
     // Keep memory bounded: drop what is older than the buffer, relative to the newest reading.

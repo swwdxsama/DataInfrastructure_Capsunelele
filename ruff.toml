@@ -1,0 +1,13 @@
+target-version = "py312"
+line-length = 120
+extend-exclude = ["src/mobile"]
+
+[lint]
+select = ["E", "F", "W", "B", "I"]
+ignore = [
+  "E741", # l / I ca nume de variabila
+  "B905", # zip() fara strict=: lungimile sunt validate explicit in preprocess
+]
+
+[lint.isort]
+known-first-party = ["preprocess", "handler", "authorizer", "process", "correlate", "batches"]
