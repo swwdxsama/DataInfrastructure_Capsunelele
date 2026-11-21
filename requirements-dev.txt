@@ -1,0 +1,3 @@
+# Unelte pentru lint si teste (local si in CI). Lambda nu are dependinte externe.
+pytest==9.2.0
+ruff==0.17.6

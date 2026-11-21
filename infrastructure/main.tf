@@ -1,4 +1,10 @@
 terraform {
+  required_version = ">= 1.6"
+
+  # Starea sta in S3 (creat de infrastructure/bootstrap). Bucket-ul se da la init:
+  #   terraform init -backend-config=backend.hcl -backend-config="bucket=<state_bucket>"
+  backend "s3" {}
+
   required_providers {
     aws     = { source = "hashicorp/aws", version = "~> 5.0" }
     archive = { source = "hashicorp/archive", version = "~> 2.4" }

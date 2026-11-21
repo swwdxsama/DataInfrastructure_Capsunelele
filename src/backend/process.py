@@ -205,7 +205,6 @@ def process_clean_batch(clean_batch, history, config=None, device_state=None):
     state = device_state if isinstance(device_state, dict) else {}
     baseline_gravity = state.get("baseline_gravity")
     state_armed = state.get("state") == "ARMED"
-    state_static_sec = int(state.get("static_sec", 0))
     state_lta_rms = state.get("lta_rms")
     state_lta_rms = float(state_lta_rms) if _is_valid_number(state_lta_rms) else None
 
