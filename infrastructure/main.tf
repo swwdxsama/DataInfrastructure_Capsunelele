@@ -25,10 +25,36 @@ resource "aws_dynamodb_table" "sensor_events" {
   }
 }
 
+# Batch-uri brute: cheie device_id + t0 (epoch ms, numar) -> deduplicare prin attribute_not_exists
+resource "aws_dynamodb_table" "raw_batches" {
+  name         = "RawBatches"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "device_id"
+  range_key    = "t0"
+
+  attribute {
+    name = "device_id"
+    type = "S"
+  }
+  attribute {
+    name = "t0"
+    type = "N"
+  }
+}
+
+# Doar codul Lambda (fara teste / __pycache__)
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_file = "${path.module}/../src/backend/ingest.py"
   output_path = "${path.module}/ingest.zip"
+
+  source {
+    content  = file("${path.module}/../src/backend/handler.py")
+    filename = "handler.py"
+  }
+  source {
+    content  = file("${path.module}/../src/backend/preprocess.py")
+    filename = "preprocess.py"
+  }
 }
 
 resource "aws_iam_role" "lambda_exec" {
@@ -55,8 +81,8 @@ resource "aws_iam_role_policy" "dynamodb_access" {
     Version = "2012-10-17"
     Statement = [{
       Effect   = "Allow"
-      Action   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Query", "dynamodb:Scan"]
-      Resource = aws_dynamodb_table.sensor_events.arn
+      Action   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:Query", "dynamodb:Scan"]
+      Resource = [aws_dynamodb_table.sensor_events.arn, aws_dynamodb_table.raw_batches.arn]
     }]
   })
 }
@@ -64,15 +90,18 @@ resource "aws_iam_role_policy" "dynamodb_access" {
 resource "aws_lambda_function" "ingest" {
   function_name    = "quake-telemetry-ingest"
   role             = aws_iam_role.lambda_exec.arn
-  handler          = "ingest.handler"
+  handler          = "handler.handler"
   runtime          = "python3.12"
+  timeout          = 10
+  memory_size      = 256
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
 
   environment {
-    variables = {
-      TABLE_NAME = aws_dynamodb_table.sensor_events.name
-    }
+    variables = merge(local.pipeline_env, {
+      RAW_TABLE_NAME     = aws_dynamodb_table.raw_batches.name
+      PREPROCESS_ENABLED = var.preprocess_enabled ? "1" : "0"
+    })
   }
 }
 
@@ -117,6 +146,10 @@ resource "aws_lambda_permission" "api_gw" {
   function_name = aws_lambda_function.ingest.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
+}
+
+output "raw_batches_table" {
+  value = aws_dynamodb_table.raw_batches.name
 }
 
 output "api_url" {
