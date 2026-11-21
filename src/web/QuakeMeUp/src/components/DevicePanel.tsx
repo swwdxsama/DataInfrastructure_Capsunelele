@@ -15,6 +15,8 @@ import {
 } from '../lib/format'
 import type { Device, Event, Telemetry, Trigger, Vector3 } from '../types'
 import { LazyAccelerationChart } from './LazyAccelerationChart'
+import { describeDisarm } from '../lib/arming'
+import { ArmLabel } from './ArmLabel'
 import { StatusLabel } from './StatusLabel'
 import { TriggerTimeline } from './TriggerTimeline'
 import './DevicePanel.css'
@@ -87,11 +89,20 @@ export function DevicePanel({
 
       <div className="device-panel-status">
         <StatusLabel state={state} />
+        {device.online && device.arming && <ArmLabel arming={device.arming} />}
         <span className="secondary">
           {device.lastSeenAt
             ? `Ultimul mesaj la ${formatTime(device.lastSeenAt)} UTC, ${formatAgo(device.lastSeenAt, serverNow)}`
             : 'Nu a trimis încă niciun mesaj'}
         </span>
+        {device.online && device.arming?.state === 'unarmed' && (
+          <span className="secondary">
+            Nu participă la detectare
+            {describeDisarm(device.arming.disarmReason) ? `: ${describeDisarm(device.arming.disarmReason)}` : ''}.
+            {device.arming.armingSec > 0 &&
+              ` Se armează după ${device.arming.armingSec} s nemișcat (acum ${device.arming.staticSec} s).`}
+          </span>
+        )}
       </div>
 
       {telemetry ? (

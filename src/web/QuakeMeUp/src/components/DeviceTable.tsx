@@ -2,6 +2,7 @@ import { ACCEL_UNIT } from '../config'
 import { vectorNorm, type DeviceState } from '../lib/derive'
 import { deviceKindLabel, formatAgo, formatNumber, formatPercent, formatTime } from '../lib/format'
 import type { Device, Telemetry } from '../types'
+import { ArmLabel } from './ArmLabel'
 import { StatusLabel } from './StatusLabel'
 import './DeviceTable.css'
 
@@ -61,7 +62,10 @@ export function DeviceTable({ devices, latestById, stateById, selectedId, server
                 <td>{deviceKindLabel[d.kind]}</td>
                 <td>{d.locality}</td>
                 <td>
-                  <StatusLabel state={state} />
+                  <span className="device-table-state">
+                    <StatusLabel state={state} />
+                    {d.online && d.arming && <ArmLabel arming={d.arming} />}
+                  </span>
                 </td>
                 <td className="num device-table-accel">{t ? formatNumber(t.accelMagnitude, 2) : '–'}</td>
                 <td className="num">{t?.gyro ? formatNumber(vectorNorm(t.gyro), 3) : '–'}</td>

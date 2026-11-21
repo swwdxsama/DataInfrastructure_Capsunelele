@@ -64,6 +64,19 @@ resource "aws_dynamodb_table" "detected_events" {
   }
 }
 
+# Starea fiecarui telefon (ARMED / UNARMED), o singura linie per device_id.
+# Citita de GET /devices; fara ea starea ar sta ascunsa in SensorEvents.
+resource "aws_dynamodb_table" "device_state" {
+  name         = "DeviceState"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "device_id"
+
+  attribute {
+    name = "device_id"
+    type = "S"
+  }
+}
+
 # Batch-uri brute: cheie device_id + t0 (epoch ms, numar) -> deduplicare prin attribute_not_exists
 resource "aws_dynamodb_table" "raw_batches" {
   name         = "RawBatches"
@@ -136,7 +149,8 @@ resource "aws_iam_role_policy" "dynamodb_access" {
           aws_dynamodb_table.sensor_events.arn,
           "${aws_dynamodb_table.sensor_events.arn}/index/*",
           aws_dynamodb_table.detected_events.arn,
-          aws_dynamodb_table.raw_batches.arn
+          aws_dynamodb_table.raw_batches.arn,
+          aws_dynamodb_table.device_state.arn
         ]
       },
       {
@@ -163,6 +177,7 @@ resource "aws_lambda_function" "ingest" {
       TABLE_NAME            = aws_dynamodb_table.sensor_events.name
       ALERTS_TABLE_NAME     = aws_dynamodb_table.detected_events.name
       RAW_TABLE_NAME        = aws_dynamodb_table.raw_batches.name
+      STATE_TABLE_NAME      = aws_dynamodb_table.device_state.name
       SNS_TOPIC_ARN         = aws_sns_topic.quake_alerts.arn
       PREPROCESS_ENABLED    = var.preprocess_enabled ? "1" : "0"
       SPIKE_ACC_THRESHOLD   = "2.5"
@@ -212,6 +227,12 @@ resource "aws_apigatewayv2_route" "get_events" {
 resource "aws_apigatewayv2_route" "get_alerts" {
   api_id    = aws_apigatewayv2_api.http_api.id
   route_key = "GET /alerts"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_devices" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "GET /devices"
   target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
 }
 

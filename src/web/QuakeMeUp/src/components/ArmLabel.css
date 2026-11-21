@@ -1,0 +1,24 @@
+.arm-label {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.arm-label[data-arm='armed'] {
+  color: var(--trace);
+}
+
+.arm-label[data-arm='unarmed'] {
+  color: var(--threshold);
+}
+
+.arm-label-progress {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
