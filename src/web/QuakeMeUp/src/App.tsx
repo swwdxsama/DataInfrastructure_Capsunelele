@@ -132,7 +132,7 @@ export default function App() {
               <h2 id="h-events" className="panel-title">
                 Cutremure detectate
               </h2>
-              <p className="panel-note">Confirmate de cel puțin 3 senzori · ultimele 20</p>
+              <p className="panel-note">Confirmate de cel puțin 3 senzori · ultimele 10</p>
             </div>
             {view ? (
               view.events.length > 0 ? (
@@ -178,10 +178,7 @@ export default function App() {
               </h2>
               {data && (
                 <p className="panel-note">
-                  {data.status.devicesOnline} din {data.status.devicesTotal} online
-                  {data.status.devicesArmed != null &&
-                    ` (${data.status.devicesArmed} armate, ${data.status.devicesUnarmed ?? 0} nearmate)`}
-                  {' · '}apasă un rând pentru detalii
+                  apasă pe un dispozitiv pentru detalii
                 </p>
               )}
             </div>

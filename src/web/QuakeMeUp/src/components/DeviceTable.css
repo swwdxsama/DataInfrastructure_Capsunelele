@@ -55,11 +55,3 @@
 .device-table-seen .secondary {
   margin-left: var(--space-2);
 }
-
-.device-table-plug {
-  width: 0.9em;
-  height: 0.9em;
-  margin-left: var(--space-1);
-  vertical-align: -0.1em;
-  color: var(--online);
-}

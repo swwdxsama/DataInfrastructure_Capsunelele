@@ -62,12 +62,15 @@ export interface Telemetry {
   accel: Vector3 | null
   /** Euclidean norm of `accel`. */
   accelMagnitude: number
-  /** Angular velocity, rad/s. Null when not reported. */
-  gyro: Vector3 | null
-  battery: {
-    /** 0..1 */
-    level: number
-    charging: boolean
+  /**
+   * Angular velocity magnitude over the last processed window, rad/s: the
+   * values the backend compares with its thresholds to arm or disarm the
+   * phone. Null when not reported.
+   */
+  gyro: {
+    rms: number
+    /** Largest instantaneous value in the window; null when not reported. */
+    peak: number | null
   } | null
   gps:
     | (GeoPoint & {
