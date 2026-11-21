@@ -99,6 +99,10 @@ def _ms_to_iso(t_ms):
     return dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+RECENT_EVENTS_INDEX = "RecentEventsIndex"
+RECENT_EVENTS_PK = "EVENT"
+
+
 def _scan_all_items(table):
     items = []
     kwargs = {}
@@ -110,6 +114,31 @@ def _scan_all_items(table):
             break
         kwargs["ExclusiveStartKey"] = last_key
     return items
+
+
+def _fetch_recent_events(events_table, ref_t_ms, window_ms):
+    """Query RecentEventsIndex for the quorum time window; fall back to scan if unavailable."""
+    if Key is not None and hasattr(events_table, "query"):
+        start_iso = _ms_to_iso(ref_t_ms - window_ms)
+        end_iso = _ms_to_iso(ref_t_ms + window_ms)
+        try:
+            items = []
+            kwargs = {
+                "IndexName": RECENT_EVENTS_INDEX,
+                "KeyConditionExpression": Key("gsi_pk").eq(RECENT_EVENTS_PK)
+                & Key("timestamp").between(start_iso, end_iso),
+            }
+            while True:
+                resp = events_table.query(**kwargs)
+                items.extend(resp.get("Items", []))
+                last_key = resp.get("LastEvaluatedKey")
+                if not last_key:
+                    break
+                kwargs["ExclusiveStartKey"] = last_key
+            return items
+        except Exception:
+            pass
+    return _scan_all_items(events_table)
 
 
 def _find_recent_zone_alert(alerts_table, zone_id, ref_t_ms, cooldown_sec):
@@ -175,7 +204,7 @@ def correlate_triggers(
     window_ms = cfg["QUORUM_WINDOW_SEC"] * 1000
     radius_km = cfg["ZONE_RADIUS_KM"]
 
-    all_events = _scan_all_items(events_table)
+    all_events = _fetch_recent_events(events_table, ref_t_ms, window_ms)
 
     active_devices = set()
     triggered_devices = set()

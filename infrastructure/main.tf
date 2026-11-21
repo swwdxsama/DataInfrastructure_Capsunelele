@@ -29,6 +29,17 @@ resource "aws_dynamodb_table" "sensor_events" {
     name = "timestamp"
     type = "S"
   }
+  attribute {
+    name = "gsi_pk"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "RecentEventsIndex"
+    hash_key        = "gsi_pk"
+    range_key       = "timestamp"
+    projection_type = "ALL"
+  }
 }
 
 resource "aws_dynamodb_table" "detected_events" {
@@ -117,6 +128,7 @@ resource "aws_iam_role_policy" "dynamodb_access" {
         ]
         Resource = [
           aws_dynamodb_table.sensor_events.arn,
+          "${aws_dynamodb_table.sensor_events.arn}/index/*",
           aws_dynamodb_table.detected_events.arn,
           aws_dynamodb_table.raw_batches.arn
         ]

@@ -204,6 +204,9 @@ def adapt_clean_batch(clean):
     }
 
 
+RECENT_EVENTS_INDEX = "RecentEventsIndex"
+RECENT_EVENTS_PK = "EVENT"
+
 EVENTS_PROJECTION_FIELDS = (
     "device_id",
     "timestamp",
@@ -376,7 +379,9 @@ def _handle_post_telemetry(event):
     triggers = result["triggers"]
 
     for feat in features:
-        events_table.put_item(Item=_to_decimal(feat))
+        item = dict(feat)
+        item["gsi_pk"] = RECENT_EVENTS_PK
+        events_table.put_item(Item=_to_decimal(item))
 
     correlation = None
     if triggers:
@@ -406,8 +411,26 @@ def _handle_post_telemetry(event):
 
 
 def _handle_get_events():
+    table = _get_events_table()
+    if Key is not None and hasattr(table, "query"):
+        try:
+            resp = table.query(
+                IndexName=RECENT_EVENTS_INDEX,
+                KeyConditionExpression=Key("gsi_pk").eq(RECENT_EVENTS_PK),
+                ScanIndexForward=False,
+                Limit=50,
+                ProjectionExpression=EVENTS_PROJECTION,
+                ExpressionAttributeNames=EVENTS_ATTR_NAMES,
+            )
+            items = resp.get("Items", [])
+            if items:
+                return _response(200, {"events": items})
+        except Exception:
+            pass
+
+    # Fallback while GSI is building or if no GSI-tagged items exist yet
     items = _scan_table(
-        _get_events_table(),
+        table,
         max_items=500,
         max_pages=3,
         projection=EVENTS_PROJECTION,
