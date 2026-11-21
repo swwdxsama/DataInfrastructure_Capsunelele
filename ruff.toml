@@ -10,4 +10,4 @@ ignore = [
 ]
 
 [lint.isort]
-known-first-party = ["preprocess", "handler", "authorizer", "process", "correlate", "batches"]
+known-first-party = ["preprocess", "handler", "authorizer", "process", "correlate", "dispatch", "batches"]

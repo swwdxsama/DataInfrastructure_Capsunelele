@@ -38,6 +38,11 @@ jobs:
         working-directory: infrastructure
     env:
       TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+      TF_VAR_dispatch_provider: ${{ vars.DISPATCH_PROVIDER || 'twilio' }}
+      TF_VAR_dispatch_to_number: ${{ secrets.DISPATCH_TO_NUMBER }}
+      TF_VAR_dispatch_from_number: ${{ secrets.DISPATCH_FROM_NUMBER }}
+      TF_VAR_twilio_account_sid: ${{ secrets.TWILIO_ACCOUNT_SID }}
+      TF_VAR_twilio_auth_token: ${{ secrets.TWILIO_AUTH_TOKEN }}
     outputs:
       api_url: ${{ steps.out.outputs.api_url }}
       dashboard_bucket: ${{ steps.out.outputs.dashboard_bucket }}
