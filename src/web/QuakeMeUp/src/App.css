@@ -2,43 +2,48 @@
   min-height: 100vh;
 }
 
+/* Dense 8px grid: 16px page gutter, 8px between rows of widgets. */
 .dashboard {
   container-type: inline-size;
-  padding: var(--space-5) var(--space-6) var(--space-6);
+  padding: var(--space-4) var(--space-5) var(--space-6);
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-2);
   min-width: 0;
 }
 
-/* Map on the left with the chart under it; the selected device's profile on the right. */
-.dashboard-grid {
-  display: grid;
-  gap: var(--space-5);
-  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-  grid-template-areas:
-    'map profile'
-    'chart profile'
-    'devices devices'
-    'quakes timeline';
+/* While a device profile is open, the page leaves room for the drawer instead of hiding under it. */
+@media (min-width: 1600px) {
+  .app[data-drawer] .dashboard {
+    margin-right: var(--panel-width);
+  }
 }
 
-.area-map {
-  grid-area: map;
+.dashboard-grid {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  /* Chart and map share the first row equally (map readable on a projector); the events table keeps 2/3. */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-areas:
+    'chart chart chart map map map'
+    'events events events events timeline timeline'
+    'devices devices devices devices devices devices';
 }
-.area-profile {
-  grid-area: profile;
-}
+
 .area-chart {
   grid-area: chart;
 }
-.area-devices {
-  grid-area: devices;
+.area-map {
+  grid-area: map;
 }
-.area-quakes {
-  grid-area: quakes;
+.area-events {
+  grid-area: events;
 }
 .area-timeline {
   grid-area: timeline;
+}
+.area-devices {
+  grid-area: devices;
 }
 
 .area-map-body {
@@ -47,66 +52,68 @@
   flex-direction: column;
 }
 
-/* The profile follows the page while the map and chart scroll by. */
-.area-profile {
-  align-self: start;
-  position: sticky;
-  top: var(--space-4);
-  max-height: calc(100vh - 2 * var(--space-4));
-  overflow-y: auto;
-  min-width: 0;
-}
-
-.profile-empty-text {
-  color: var(--ink-2);
-  max-width: 44ch;
-}
-
-.area-timeline-body {
-  max-height: 480px;
-  overflow-y: auto;
-}
-
-.area-quakes,
+.area-events,
 .area-timeline {
   align-self: start;
 }
 
+.area-timeline-body {
+  max-height: 440px;
+  overflow-y: auto;
+}
+
+/* Fallback while a lazily loaded chart chunk arrives. */
 .placeholder {
   display: grid;
   place-items: center;
   padding: var(--space-4);
   text-align: center;
   border: 1px dashed var(--rule-strong);
-  border-radius: 3px;
+  border-radius: 2px;
   background: var(--surface-sunk);
   color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+/* Device profile: a side drawer over the right edge, the dashboard stays in place. */
+.drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(var(--panel-width), 100vw);
+  overflow-y: auto;
+  z-index: 1100; /* above Leaflet's panes and controls */
+  background: var(--surface);
+  border-left: 1px solid var(--rule-strong);
+  box-shadow: -8px 0 24px rgb(0 0 0 / 0.25);
+}
+
+.drawer .device-panel {
+  min-height: 100%;
+  border: 0;
+  border-top: 3px solid var(--trace);
+  border-radius: 0;
 }
 
 @container (max-width: 1000px) {
   .dashboard-grid {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-      'map'
-      'profile'
       'chart'
-      'devices'
-      'quakes'
-      'timeline';
-  }
-  .area-profile {
-    position: static;
-    max-height: none;
+      'map'
+      'events'
+      'timeline'
+      'devices';
   }
 }
 
 @media (max-width: 640px) {
   .dashboard {
-    padding: var(--space-4);
+    padding: var(--space-2) var(--space-4) var(--space-5);
   }
   .panel-head {
     flex-direction: column;
-    gap: var(--space-1);
+    align-items: flex-start;
+    gap: var(--space-2);
     padding-inline: var(--space-4);
   }
   .panel-body {

@@ -7,11 +7,12 @@
     <meta name="description" content="Monitorizarea rețelei de senzori seismici QuakeMeUp" />
     <title>QuakeMeUp</title>
     <script>
-      // Apply the saved (or system) theme before the first paint, so the page never flashes.
+      // Apply the saved theme before the first paint, so the page never flashes. Dark by default:
+      // it is a monitoring screen, often shown on a projector in a dim room.
+      document.documentElement.dataset.theme = 'dark'
       try {
         var t = localStorage.getItem('quakemeup-theme')
-        if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-        document.documentElement.dataset.theme = t
+        if (t === 'light') document.documentElement.dataset.theme = 'light'
       } catch (e) {}
     </script>
   </head>

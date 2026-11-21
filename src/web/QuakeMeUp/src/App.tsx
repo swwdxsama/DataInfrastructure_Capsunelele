@@ -1,25 +1,22 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { api, apiConfigured } from './api'
 import { DevicePanel } from './components/DevicePanel'
-import { LazyAccelerationChart } from './components/LazyAccelerationChart'
 import { DeviceTable } from './components/DeviceTable'
-import { QuakeList } from './components/QuakeList'
+import { EventsTable } from './components/EventsTable'
+import { HistoryChart } from './components/HistoryChart'
+import { LatestValues } from './components/LatestValues'
 import { StatusHeader } from './components/StatusHeader'
-import { SystemStrip } from './components/SystemStrip'
+import { SystemStatus } from './components/SystemStatus'
 import { TriggerTimeline } from './components/TriggerTimeline'
-import { HISTORY_WINDOW_S, POLL_INTERVAL_MS } from './config'
+import { WidgetState } from './components/WidgetState'
+import { POLL_INTERVAL_MS } from './config'
 import { usePolling } from './hooks/usePolling'
-import { deriveView, type DeviceState } from './lib/derive'
-import type { Device } from './types'
-import { formatAccel } from './lib/format'
+import { deriveView } from './lib/derive'
+import { waitingState } from './lib/waiting'
 import './App.css'
 
 // Leaflet is the heaviest dependency; load it after the first paint.
 const DeviceMap = lazy(() => import('./components/DeviceMap'))
-
-// Stable empty values, so the map does not re-render while waiting for data.
-const NO_DEVICES: Device[] = []
-const NO_STATES = new Map<string, DeviceState>()
 
 const HASH_KEY = 'dispozitiv'
 function readHash() {
@@ -52,104 +49,124 @@ export default function App() {
   const data = snapshot.data
   const view = data ? deriveView(data) : null
   const selected = view && selectedId ? view.deviceById.get(selectedId) : undefined
-
-  const waitingText = !apiConfigured
-    ? 'Apare aici când API-ul trimite date.'
-    : snapshot.error
-      ? snapshot.error.message
-      : 'Se încarcă'
+  const wait = waitingState(apiConfigured, snapshot.error)
 
   return (
-    <div className="app">
+    <div className="app" data-drawer={selected ? true : undefined}>
       <StatusHeader
         activeEvent={view?.activeEvent ?? null}
         calmText={
-          view ? 'Nicio activitate seismică' : apiConfigured ? 'Se conectează la rețea' : 'Fără sursă de date'
+          view
+            ? 'Nicio activitate seismică'
+            : !apiConfigured
+              ? 'Fără sursă de date'
+              : snapshot.error
+                ? 'Fără conexiune la API'
+                : 'Se conectează la rețea'
         }
       />
 
       <main className="dashboard">
-        <SystemStrip
+        <h1 className="visually-hidden">QuakeMeUp, monitorizarea rețelei de senzori seismici</h1>
+
+        {/* 1. Latest values */}
+        <LatestValues
+          view={view}
+          apiConfigured={apiConfigured}
+          error={snapshot.error}
+          updatedAt={snapshot.updatedAt}
+        />
+
+        {/* 3. System state, kept right under the values it qualifies */}
+        <SystemStatus
           status={data?.status ?? null}
-          lastEndedEvent={view?.lastEndedEvent ?? null}
-          serverNow={view?.serverNow ?? null}
+          view={view}
           apiConfigured={apiConfigured}
           updatedAt={snapshot.updatedAt}
           failingSince={snapshot.failingSince}
           error={snapshot.error}
         />
 
+        {/* 2. History */}
         <div className="dashboard-grid">
+          <HistoryChart
+            view={view}
+            liveHistory={data?.history ?? null}
+            apiConfigured={apiConfigured}
+            error={snapshot.error}
+          />
+
           <section className="panel area-map" aria-labelledby="h-map">
             <div className="panel-head">
               <h2 id="h-map" className="panel-title">
-                Harta senzorilor
+                Harta rețelei
               </h2>
+              {view && (
+                <p className="panel-note">
+                  {view.devices.length} senzori ·{' '}
+                  {view.events.filter((e) => e.epicenter).length} epicentre ·{' '}
+                  <strong className="panel-hint">apasă un senzor pentru detalii</strong>
+                </p>
+              )}
             </div>
             <div className="panel-body area-map-body">
-              <Suspense fallback={<div className="device-map-fallback">Se încarcă harta</div>}>
-                <DeviceMap
-                  devices={view?.devices ?? NO_DEVICES}
-                  stateById={view?.stateById ?? NO_STATES}
-                  selectedId={selectedId}
-                  activeEvent={view?.activeEvent ?? null}
-                  onSelect={setSelectedId}
-                />
-              </Suspense>
+              {view ? (
+                <Suspense fallback={<WidgetState kind="loading" message="Se încarcă harta" height={400} />}>
+                  <DeviceMap
+                    devices={view.devices}
+                    stateById={view.stateById}
+                    selectedId={selectedId}
+                    activeEvent={view.activeEvent}
+                    events={view.events}
+                    onSelect={setSelectedId}
+                  />
+                </Suspense>
+              ) : (
+                <WidgetState kind={wait.kind} message={wait.message} height={400} />
+              )}
             </div>
           </section>
 
-          <div className="area-profile">
-            {view && selected ? (
-              <DevicePanel
-                device={selected}
-                telemetry={view.latestById.get(selected.id)}
-                state={view.stateById.get(selected.id) ?? 'offline'}
-                triggers={view.triggers}
-                events={view.events}
-                deviceById={view.deviceById}
-                threshold={view.threshold}
-                serverNow={view.serverNow}
-                onClose={closeProfile}
-              />
-            ) : (
-              <section className="panel profile-empty" aria-labelledby="h-profile">
-                <div className="panel-head">
-                  <h2 id="h-profile" className="panel-title">
-                    Profil dispozitiv
-                  </h2>
-                </div>
-                <p className="panel-body profile-empty-text">
-                  Apasă pe un dispozitiv de pe hartă sau din tabel ca să vezi valorile curente,
-                  istoricul accelerației și depășirile de prag.
-                </p>
-              </section>
-            )}
-          </div>
-
-          <section className="panel area-chart" aria-labelledby="h-chart">
+          <section className="panel area-events" aria-labelledby="h-events">
             <div className="panel-head">
-              <h2 id="h-chart" className="panel-title">
-                Accelerație în rețea
+              <h2 id="h-events" className="panel-title">
+                Cutremure detectate
               </h2>
-              <p className="panel-note">
-                Ultimele {HISTORY_WINDOW_S / 60} minute, valoarea maximă din fiecare secundă
-              </p>
+              <p className="panel-note">Confirmate de cel puțin 3 senzori · ultimele 20</p>
             </div>
-            <div className="panel-body">
-              {view && data && data.history.length > 0 ? (
-                <LazyAccelerationChart
-                  points={data.history}
-                  threshold={view.threshold}
-                  end={view.serverNow}
-                  events={data.events}
-                  height={300}
-                  label={`Accelerația maximă în rețea, ultimele ${HISTORY_WINDOW_S / 60} minute, prag ${formatAccel(view.threshold)}`}
+            {view ? (
+              view.events.length > 0 ? (
+                <EventsTable events={view.events} serverNow={view.serverNow} />
+              ) : (
+                <div className="panel-body">
+                  <WidgetState kind="empty" message="Rețeaua nu a confirmat încă niciun cutremur." />
+                </div>
+              )
+            ) : (
+              <div className="panel-body">
+                <WidgetState kind={wait.kind} message={wait.message} height={160} />
+              </div>
+            )}
+          </section>
+
+          <section className="panel area-timeline" aria-labelledby="h-timeline">
+            <div className="panel-head">
+              <h2 id="h-timeline" className="panel-title">
+                Depășiri ale pragului
+              </h2>
+              <p className="panel-note">pe senzor, ultimele 50</p>
+            </div>
+            <div className="panel-body area-timeline-body">
+              {view ? (
+                <TriggerTimeline
+                  triggers={view.triggers}
+                  events={view.events}
+                  deviceById={view.deviceById}
+                  serverNow={view.serverNow}
+                  onSelectDevice={setSelectedId}
                 />
               ) : (
-                <div className="placeholder" style={{ height: 300 }}>
-                  {view ? 'Nicio măsurătoare în ultimele 5 minute.' : waitingText}
-                </div>
+                <WidgetState kind={wait.kind} message={wait.message} height={160} />
               )}
             </div>
           </section>
@@ -161,62 +178,49 @@ export default function App() {
               </h2>
               {data && (
                 <p className="panel-note">
-                  {data.status.devicesOnline} din {data.status.devicesTotal} online
+                  {data.status.devicesOnline} din {data.status.devicesTotal} online · apasă un rând pentru detalii
                 </p>
               )}
             </div>
-            {view && view.devices.length > 0 ? (
-              <DeviceTable
-                devices={view.devices}
-                latestById={view.latestById}
-                stateById={view.stateById}
-                selectedId={selectedId}
-                serverNow={view.serverNow}
-                onSelect={setSelectedId}
-              />
-            ) : (
-              <p className="empty">
-                {view ? 'Niciun dispozitiv înregistrat încă.' : waitingText}
-              </p>
-            )}
-          </section>
-
-          <section className="panel area-quakes" aria-labelledby="h-quakes">
-            <div className="panel-head">
-              <h2 id="h-quakes" className="panel-title">
-                Cutremure detectate
-              </h2>
-              <p className="panel-note">Confirmate de cel puțin 3 senzori</p>
-            </div>
             {view ? (
-              <QuakeList events={view.events} serverNow={view.serverNow} />
-            ) : (
-              <p className="empty">{waitingText}</p>
-            )}
-          </section>
-
-          <section className="panel area-timeline" aria-labelledby="h-timeline">
-            <div className="panel-head">
-              <h2 id="h-timeline" className="panel-title">
-                Depășiri ale pragului
-              </h2>
-            </div>
-            {view ? (
-              <div className="panel-body area-timeline-body">
-                <TriggerTimeline
-                  triggers={view.triggers}
-                  events={view.events}
-                  deviceById={view.deviceById}
+              view.devices.length > 0 ? (
+                <DeviceTable
+                  devices={view.devices}
+                  latestById={view.latestById}
+                  stateById={view.stateById}
+                  selectedId={selectedId}
                   serverNow={view.serverNow}
-                  onSelectDevice={setSelectedId}
+                  onSelect={setSelectedId}
                 />
-              </div>
+              ) : (
+                <div className="panel-body">
+                  <WidgetState kind="empty" message="Niciun dispozitiv înregistrat încă." />
+                </div>
+              )
             ) : (
-              <p className="empty">{waitingText}</p>
+              <div className="panel-body">
+                <WidgetState kind={wait.kind} message={wait.message} height={160} />
+              </div>
             )}
           </section>
         </div>
       </main>
+
+      {view && selected && (
+        <div className="drawer">
+          <DevicePanel
+            device={selected}
+            telemetry={view.latestById.get(selected.id)}
+            state={view.stateById.get(selected.id) ?? 'offline'}
+            triggers={view.triggers}
+            events={view.events}
+            deviceById={view.deviceById}
+            threshold={view.threshold}
+            serverNow={view.serverNow}
+            onClose={closeProfile}
+          />
+        </div>
+      )}
     </div>
   )
 }

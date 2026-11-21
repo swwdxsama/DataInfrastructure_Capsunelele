@@ -51,7 +51,7 @@
   text-rendering: optimizeLegibility;
 }
 
-/* Dark theme, chosen with the button in the header. Keep in sync with src/lib/palette.ts */
+/* Dark theme: the default (set in index.html), light is one click away in the header. Keep in sync with src/lib/palette.ts */
 :root[data-theme='dark'] {
   --paper: #0f151b;
   --surface: #172029;
@@ -147,11 +147,19 @@ button {
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-4) var(--space-5) var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-2);
+}
+
+.panel-head-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-3);
+  min-width: 0;
 }
 
 .panel-title {
-  font-size: var(--text-md);
+  font-size: var(--text-base);
   font-weight: 700;
   line-height: 1.2;
 }
@@ -161,13 +169,17 @@ button {
   color: var(--ink-2);
 }
 
+.panel-hint {
+  color: var(--ink);
+}
+
 .panel-body {
-  padding: 0 var(--space-5) var(--space-5);
+  padding: 0 var(--space-4) var(--space-4);
   min-width: 0;
 }
 
 .empty {
-  padding: var(--space-5);
+  padding: var(--space-4);
   color: var(--ink-2);
 }
 
@@ -226,12 +238,12 @@ button {
 
 .table th:first-child,
 .table td:first-child {
-  padding-left: var(--space-5);
+  padding-left: var(--space-4);
 }
 
 .table th:last-child,
 .table td:last-child {
-  padding-right: var(--space-5);
+  padding-right: var(--space-4);
 }
 
 .table .num {

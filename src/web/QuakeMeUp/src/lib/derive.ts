@@ -11,6 +11,12 @@ export interface DashboardView {
   events: Event[]
   activeEvent: Event | null
   lastEndedEvent: Event | null
+  /** The active earthquake, otherwise the most recent one. */
+  latestEvent: Event | null
+  /** Strongest current reading among online devices. */
+  peakNow: { device: Device; telemetry: Telemetry } | null
+  /** Newest `receivedAt` across all devices (ms): when the backend last stored data. */
+  lastReceivedAt: number | null
   threshold: number
   /** Server clock at the time of the snapshot; all "x ago" labels use it. */
   serverNow: number
@@ -34,11 +40,24 @@ export function deriveView(snapshot: DashboardSnapshot): DashboardView {
       !d.online ? 'offline' : t && t.accelMagnitude >= threshold ? 'above' : 'online',
     )
   }
+  let peakNow: DashboardView['peakNow'] = null
+  let lastReceivedAt: number | null = null
+  for (const t of snapshot.latest) {
+    const received = Date.parse(t.receivedAt)
+    if (lastReceivedAt === null || received > lastReceivedAt) lastReceivedAt = received
+    const device = deviceById.get(t.deviceId)
+    if (device?.online && (!peakNow || t.accelMagnitude > peakNow.telemetry.accelMagnitude)) {
+      peakNow = { device, telemetry: t }
+    }
+  }
+
   let activeEvent: Event | null = null
   let lastEndedEvent: Event | null = null
+  let newestEvent: Event | null = null
   for (const e of snapshot.events) {
     if (e.status === 'active') activeEvent ??= e
     else if (!lastEndedEvent || e.startedAt > lastEndedEvent.startedAt) lastEndedEvent = e
+    if (!newestEvent || e.startedAt > newestEvent.startedAt) newestEvent = e
   }
 
   return {
@@ -50,6 +69,9 @@ export function deriveView(snapshot: DashboardSnapshot): DashboardView {
     events: snapshot.events,
     activeEvent,
     lastEndedEvent,
+    latestEvent: activeEvent ?? newestEvent,
+    peakNow,
+    lastReceivedAt,
     threshold,
     serverNow: Date.parse(snapshot.status.generatedAt),
   }

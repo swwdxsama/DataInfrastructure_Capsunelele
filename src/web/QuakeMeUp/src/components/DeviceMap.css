@@ -7,9 +7,9 @@
 
 .device-map-canvas {
   flex: 1;
-  min-height: 440px;
+  min-height: 400px;
   border: 1px solid var(--rule);
-  border-radius: 3px;
+  border-radius: 2px;
   background: var(--surface-sunk);
   font-family: var(--font);
 }
@@ -50,6 +50,11 @@
   box-shadow: none;
 }
 
+.device-map-tip-hint {
+  color: var(--trace);
+  font-weight: 700;
+}
+
 .device-map-tip::before {
   border-top-color: var(--rule-strong) !important;
 }
@@ -75,9 +80,17 @@
   border: 2px dashed var(--alert);
 }
 
+.device-map-legend-past {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--alert);
+  background: color-mix(in srgb, var(--alert) 15%, transparent);
+}
+
 .device-map-fallback {
   flex: 1;
-  min-height: 440px;
+  min-height: 400px;
   display: grid;
   place-items: center;
   border: 1px solid var(--rule);

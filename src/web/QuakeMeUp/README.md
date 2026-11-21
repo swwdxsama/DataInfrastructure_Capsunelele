@@ -1,6 +1,6 @@
 # QuakeMeUp, dashboard
 
-Dashboard-ul rețelei de detectare a cutremurelor. Telefoanele Android trimit accelerometru, giroscop, GPS și baterie prin AWS IoT Core → Lambda → PostgreSQL; dashboard-ul citește un API REST la fiecare 3 secunde.
+Dashboard-ul rețelei de detectare a cutremurelor. Telefoanele Android trimit accelerometru, giroscop, GPS și baterie prin AWS IoT Core → Lambda → DynamoDB; dashboard-ul citește un API REST la fiecare 3 secunde.
 
 ## Pornire
 
@@ -37,6 +37,26 @@ Toate răspund cu JSON; formele exacte sunt în `src/types.ts`. Orele sunt ISO 8
 
 API Gateway trebuie să permită CORS pentru originea dashboard-ului.
 
+## Ce afișează
+
+1. **Valori curente** (sus, fără scroll): accelerația maximă din rețea acum (normal / ridicat de la 50% din prag / alertă de la prag), ultimul cutremur cu intensitatea estimată, locația lui, ora ultimei citiri stocate și vechimea ei.
+2. **Istoric**: graficul accelerației pe 5 min / 1 h / 24 h / 7 zile cu cutremurele marcate, tabelul sortabil al cutremurelor, harta cu senzorii și epicentrele.
+3. **Starea sistemului**: senzori online, API (din polling), baza de date (dedusă), ultimul răspuns, ingestie. Fiecare widget are stări de încărcare, gol și eroare.
+
+**Intensitatea** e estimată din PGA (scara Mercalli, Wald et al. 1999), în `src/lib/intensity.ts`. Backend-ul nu trimite magnitudine.
+
+**Starea DynamoDB** e dedusă (nu există endpoint de health): `/status` răspunde → citirile merg; `receivedAt` recent → scrierile merg. Regulile sunt în `src/lib/health.ts`.
+
+## Date mock
+
+Tot ce e simulat e în `src/api/mock.ts`, marcat `MOCK:`, iar în interfață apare cu eticheta **Date demo**.
+
+| Ce | Sursa acum | Cum se înlocuiește |
+|---|---|---|
+| Istoric 5 min | real, din snapshot | – |
+| Istoric 1 h | real, `windowSec=3600`, agregat pe 10 s în browser | – |
+| Istoric 24 h, 7 zile | fond simulat + cutremurele reale din `/events` | un endpoint agregat, de ex. `GET /telemetry/history?windowSec=86400&bucketSec=300`; apoi `source: 'api'` în `HISTORY_RANGES` (`src/config.ts`) |
+
 ## Structură
 
 ```
@@ -46,5 +66,7 @@ src/
   api/               singurul strat de date (client REST)
   hooks/usePolling   polling fără suprapuneri, oprit când tab-ul e ascuns
   lib/               formatare ro-RO în UTC, date derivate, paleta pentru grafice
-  components/        antet de stare, bara sistemului, grafic, hartă, tabele, profil
+  api/mock.ts        date simulate, până există endpoint-urile reale
+  components/        LatestValues, SystemStatus, HistoryChart, EventsTable, DeviceMap,
+                     DeviceTable, TriggerTimeline, DevicePanel (sertar), WidgetState
 ```

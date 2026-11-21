@@ -2,7 +2,8 @@ import 'leaflet/dist/leaflet.css'
 import { useEffect } from 'react'
 import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import type { DeviceState } from '../lib/derive'
-import { deviceKindLabel } from '../lib/format'
+import { deviceKindLabel, formatDateTime, formatNumber } from '../lib/format'
+import { formatIntensity } from '../lib/intensity'
 import { usePalette } from '../lib/palette'
 import type { Device, Event } from '../types'
 import './DeviceMap.css'
@@ -12,6 +13,8 @@ interface Props {
   stateById: Map<string, DeviceState>
   selectedId: string | null
   activeEvent: Event | null
+  /** Past earthquakes, drawn at their estimated epicenter. */
+  events: Event[]
   onSelect: (id: string) => void
 }
 
@@ -20,8 +23,9 @@ const ROMANIA: [[number, number], [number, number]] = [
   [48.3, 29.8],
 ]
 
-export default function DeviceMap({ devices, stateById, selectedId, activeEvent, onSelect }: Props) {
+export default function DeviceMap({ devices, stateById, selectedId, activeEvent, events, onSelect }: Props) {
   const palette = usePalette()
+  const past = events.filter((e) => e.status === 'ended' && e.epicenter)
   const fillFor: Record<DeviceState, string> = {
     above: palette.alert,
     online: palette.online,
@@ -43,6 +47,23 @@ export default function DeviceMap({ devices, stateById, selectedId, activeEvent,
           maxZoom={18}
         />
         <KeepSized />
+
+        {past.map((e) => (
+          <CircleMarker
+            key={e.id}
+            center={[e.epicenter!.lat, e.epicenter!.lon]}
+            radius={9}
+            pathOptions={{ color: palette.alert, weight: 2, fillColor: palette.alert, fillOpacity: 0.15 }}
+          >
+            <Tooltip direction="top" offset={[0, -8]} className="device-map-tip">
+              <strong>{e.region ?? 'Zonă nedeterminată'}</strong>
+              <br />
+              {formatDateTime(e.startedAt)} UTC
+              <br />
+              {formatIntensity(e.peakAccel)}, PGA {formatNumber(e.peakAccel, 2)} m/s²
+            </Tooltip>
+          </CircleMarker>
+        ))}
 
         {activeEvent?.epicenter && (
           <>
@@ -81,6 +102,8 @@ export default function DeviceMap({ devices, stateById, selectedId, activeEvent,
                 <strong>{d.name}</strong> {d.locality}
                 <br />
                 {deviceKindLabel[d.kind]}, {state === 'offline' ? 'offline' : state === 'above' ? 'peste prag' : 'online'}
+                <br />
+                <span className="device-map-tip-hint">{selected ? 'Profil deschis' : 'Click pentru detalii'}</span>
               </Tooltip>
             </CircleMarker>
           )
@@ -97,6 +120,11 @@ export default function DeviceMap({ devices, stateById, selectedId, activeEvent,
         <li>
           <span className="dot" data-state="offline" /> Offline
         </li>
+        {past.length > 0 && (
+          <li>
+            <span className="device-map-legend-past" /> Cutremur anterior
+          </li>
+        )}
         {activeEvent?.epicenter && (
           <li>
             <span className="device-map-legend-epi" /> Epicentru estimat
