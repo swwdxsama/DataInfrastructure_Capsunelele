@@ -3,7 +3,7 @@ import { useEffect } from 'react'
 import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import type { DeviceState } from '../lib/derive'
 import { deviceKindLabel } from '../lib/format'
-import { palette } from '../lib/palette'
+import { usePalette } from '../lib/palette'
 import type { Device, Event } from '../types'
 import './DeviceMap.css'
 
@@ -20,13 +20,13 @@ const ROMANIA: [[number, number], [number, number]] = [
   [48.3, 29.8],
 ]
 
-const fillFor: Record<DeviceState, string> = {
-  above: palette.alert,
-  online: palette.online,
-  offline: palette.surface,
-}
-
 export default function DeviceMap({ devices, stateById, selectedId, activeEvent, onSelect }: Props) {
+  const palette = usePalette()
+  const fillFor: Record<DeviceState, string> = {
+    above: palette.alert,
+    online: palette.online,
+    offline: palette.surface,
+  }
   return (
     <div className="device-map">
       <MapContainer

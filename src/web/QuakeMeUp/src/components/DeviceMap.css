@@ -23,14 +23,35 @@
   font-size: 12px;
 }
 
+/* Dark base map: invert the muted tiles and match the panels. */
+[data-theme='dark'] .device-map-canvas .leaflet-tile-pane {
+  filter: grayscale(1) invert(1) brightness(0.85) contrast(0.9);
+}
+
+[data-theme='dark'] .device-map-canvas .leaflet-control-attribution,
+[data-theme='dark'] .device-map-canvas .leaflet-bar a {
+  background: var(--surface);
+  color: var(--ink-2);
+  border-color: var(--rule);
+}
+
+[data-theme='dark'] .device-map-canvas .leaflet-control-attribution a {
+  color: var(--trace);
+}
+
 .device-map-tip {
   font-family: var(--font);
   font-size: var(--text-sm);
   line-height: 1.35;
   color: var(--ink);
+  background: var(--surface);
   border-radius: 3px;
   border-color: var(--rule-strong);
   box-shadow: none;
+}
+
+.device-map-tip::before {
+  border-top-color: var(--rule-strong) !important;
 }
 
 .device-map-legend {

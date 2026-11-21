@@ -13,7 +13,7 @@ import {
 import type { NameType, ValueType } from 'recharts/types/component/DefaultTooltipContent'
 import { ACCEL_UNIT, HISTORY_WINDOW_S } from '../config'
 import { formatAccel, formatNumber, formatShortTime, formatTime } from '../lib/format'
-import { palette } from '../lib/palette'
+import { usePalette } from '../lib/palette'
 import type { AccelPoint, Event } from '../types'
 import './AccelerationChart.css'
 
@@ -37,6 +37,7 @@ interface Row {
 const MINUTE = 60_000
 
 export function AccelerationChart({ points, threshold, end, events = [], height, label }: Props) {
+  const palette = usePalette()
   const start = end - HISTORY_WINDOW_S * 1000
   const rows: Row[] = points.map((p) => ({ t: Date.parse(p.t), v: p.peak }))
 

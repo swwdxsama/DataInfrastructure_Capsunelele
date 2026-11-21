@@ -16,6 +16,7 @@
   --alert: #b3202a;
   --alert-ink: #ffffff;
   --alert-wash: #f7e6e6;
+  --select-wash: #e3ebf5;
   --online: #2e7048;
   --offline: #8a949c;
   --focus: #1f4c94;
@@ -48,6 +49,29 @@
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Dark theme, chosen with the button in the header. Keep in sync with src/lib/palette.ts */
+:root[data-theme='dark'] {
+  --paper: #0f151b;
+  --surface: #172029;
+  --surface-sunk: #121a21;
+  --ink: #e6ebef;
+  --ink-2: #a9b4bd;
+  --ink-3: #86919b;
+  --rule: #2e3944;
+  --rule-strong: #4b5864;
+  --trace: #7aa9f2;
+  --threshold: #e3a64a;
+  --alert: #f2676b;
+  --alert-ink: #1a0b0c;
+  --alert-wash: #3a1d21;
+  --select-wash: #1f3150;
+  --online: #4fb87a;
+  --offline: #7d8892;
+  --focus: #7aa9f2;
+
+  color-scheme: dark;
 }
 
 /* Large displays and projectors at 1920 px and up */

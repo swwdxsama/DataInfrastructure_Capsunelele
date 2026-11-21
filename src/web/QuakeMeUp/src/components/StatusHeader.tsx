@@ -1,4 +1,5 @@
 import { useNow } from '../hooks/useNow'
+import { setTheme, useTheme } from '../hooks/useTheme'
 import { formatAccel, formatAgo, formatTime } from '../lib/format'
 import type { Event } from '../types'
 import './StatusHeader.css'
@@ -33,7 +34,10 @@ export function StatusHeader({ activeEvent, calmText }: Props) {
         )}
       </div>
 
-      <UtcClock />
+      <div className="status-header-end">
+        <UtcClock />
+        <ThemeToggle />
+      </div>
     </header>
   )
 }
@@ -61,6 +65,34 @@ function UtcClock() {
       <time dateTime={new Date(now).toISOString()}>{formatTime(now)}</time>
       <span className="status-header-clock-zone">UTC</span>
     </p>
+  )
+}
+
+function ThemeToggle() {
+  const theme = useTheme()
+  const dark = theme === 'dark'
+  return (
+    <button
+      type="button"
+      className="theme-toggle"
+      aria-pressed={dark}
+      title={dark ? 'Trece la tema luminoasă' : 'Trece la tema întunecată'}
+      onClick={() => setTheme(dark ? 'light' : 'dark')}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="theme-toggle-icon">
+        {dark ? (
+          <>
+            <circle cx="12" cy="12" r="4.5" fill="currentColor" />
+            <g stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" />
+            </g>
+          </>
+        ) : (
+          <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" fill="currentColor" />
+        )}
+      </svg>
+      <span>{dark ? 'Luminos' : 'Întunecat'}</span>
+    </button>
   )
 }
 
