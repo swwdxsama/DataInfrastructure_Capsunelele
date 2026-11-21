@@ -289,5 +289,129 @@ class TestCorrelateTriggers(unittest.TestCase):
         self.assertEqual(len(sns.published), 1)
 
 
+class TestEndToEndPreprocessIngestProcess(unittest.TestCase):
+    def test_contract_v1_end_to_end_through_preprocess_ingest_and_process(self):
+        import json
+        import time
+        from datetime import datetime, timezone
+
+        import ingest
+
+        now_ms = int(time.time() * 1000)
+        t0_ms = now_ms - 2000
+        n = 40  # 2 seconds at 20 Hz
+        offsets = [i * 50 for i in range(n)]
+        # Gravity on Z + 4 Hz seismic shake on X
+        acc_x = [3.5 * math.sin(2.0 * math.pi * 4.0 * i / 20.0) for i in range(n)]
+        acc_y = [0.0] * n
+        acc_z = [9.81] * n
+        gyro_zero = [0.01] * n
+
+        payload = {
+            "schema_version": 1,
+            "event_type": "raw_sensor_batch",
+            "device_id": "ios-e2e",
+            "platform": "ios",
+            "sent_at": now_ms,
+            "timestamp": datetime.fromtimestamp(now_ms / 1000.0, tz=timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
+            "value": 10.42,
+            "unit": "m/s^2",
+            "gyro_unit": "rad/s",
+            "sample_rate_hz": 20,
+            "location": {"lat": 46.7712, "lon": 23.6236, "accuracy": 8.5},
+            "accelerometer": {"t0": t0_ms, "t": offsets, "x": acc_x, "y": acc_y, "z": acc_z},
+            "gyroscope": {"t0": t0_ms, "t": offsets, "x": gyro_zero, "y": gyro_zero, "z": gyro_zero},
+        }
+
+        class MockEventsTable(FakeTable):
+            def __init__(self, history_items):
+                super().__init__(history_items)
+
+            def get_item(self, Key):
+                for it in self.items:
+                    if it.get("device_id") == Key["device_id"] and it.get("timestamp") == Key["timestamp"]:
+                        return {"Item": it}
+                return {}
+
+            def query(self, **kwargs):
+                return {"Items": list(self.items)}
+
+        class MockConditionalCheckError(Exception):
+            def __init__(self):
+                super().__init__("ConditionalCheckFailedException")
+                self.response = {"Error": {"Code": "ConditionalCheckFailedException"}}
+
+        class MockRawTable:
+            def __init__(self):
+                self.items = {}
+
+            def put_item(self, Item, ConditionExpression=None):
+                k = (Item["device_id"], Item["t0"])
+                if ConditionExpression and k in self.items:
+                    raise MockConditionalCheckError()
+                self.items[k] = dict(Item)
+
+            def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues):
+                it = self.items[(Key["device_id"], Key["t0"])]
+                it["status"] = ExpressionAttributeValues[":s"]
+
+        history_items = [
+            {
+                "device_id": "ios-e2e",
+                "t_ms": t0_ms - (20 - i) * 1000,
+                "timestamp": ingest._ms_to_iso(t0_ms - (20 - i) * 1000),
+                "rms": 0.1,
+                "is_stationary": True,
+                "lat": 46.7712,
+                "lon": 23.6236,
+                "is_trigger": False,
+            }
+            for i in range(20)
+        ]
+
+        mock_events = MockEventsTable(history_items)
+        mock_alerts = FakeTable()
+        mock_raw = MockRawTable()
+
+        orig_events = ingest._events_table
+        orig_alerts = ingest._alerts_table
+        orig_raw = ingest._raw_table
+        orig_raw_env = os.environ.get("RAW_TABLE_NAME")
+        try:
+            ingest._events_table = mock_events
+            ingest._alerts_table = mock_alerts
+            ingest._raw_table = mock_raw
+            os.environ["RAW_TABLE_NAME"] = "RawBatches"
+
+            event = {
+                "requestContext": {"http": {"method": "POST", "path": "/telemetry"}},
+                "rawPath": "/telemetry",
+                "body": json.dumps(payload),
+            }
+            resp = ingest.lambda_handler(event, None)
+            self.assertEqual(resp["statusCode"], 200)
+            body = json.loads(resp["body"])
+            self.assertEqual(body["status"], "processed")
+            self.assertEqual(body["windows_processed"], 2)
+            self.assertGreater(body["max_pga"], 2.5)
+            self.assertEqual(body["triggers_count"], 2)
+            self.assertEqual(mock_raw.items[("ios-e2e", t0_ms)]["status"], "preprocessed")
+
+            # Duplicate batch with same (device_id, t0) must be ignored via RawBatches dedup
+            dup_resp = ingest.lambda_handler(event, None)
+            self.assertEqual(dup_resp["statusCode"], 200)
+            self.assertEqual(json.loads(dup_resp["body"])["status"], "duplicate_ignored")
+        finally:
+            ingest._events_table = orig_events
+            ingest._alerts_table = orig_alerts
+            ingest._raw_table = orig_raw
+            if orig_raw_env is None:
+                os.environ.pop("RAW_TABLE_NAME", None)
+            else:
+                os.environ["RAW_TABLE_NAME"] = orig_raw_env
+
+
 if __name__ == "__main__":
     unittest.main()

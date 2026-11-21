@@ -1,140 +1,83 @@
 """Thin AWS Lambda handler for seismic telemetry ingestion, events, and alerts."""
 
+import base64
 import json
 import math
 import os
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 
-import boto3
-from boto3.dynamodb.conditions import Key
-
 from correlate import correlate_triggers
+from preprocess import preprocess
 from process import process_clean_batch
 
-# Automatically use teammate's preprocess.py once merged; fall back to built-in Contract v1 adapter.
 try:
-    from preprocess import preprocess_batch
+    from boto3.dynamodb.conditions import Key
 except ImportError:
-    def preprocess_batch(body):
-        """Built-in Contract v1 fallback adapter."""
-        if not isinstance(body, dict):
-            return None, "Payload must be a JSON object"
+    Key = None
 
-        if body.get("schema_version") != 1:
-            return None, "Unsupported schema_version; expected 1"
-
-        device_id = body.get("device_id")
-        if not isinstance(device_id, str) or not device_id.strip():
-            return None, "Missing or invalid device_id"
-
-        sample_rate_hz = body.get("sample_rate_hz", 20)
-        if not isinstance(sample_rate_hz, int) or sample_rate_hz <= 0:
-            return None, "Invalid sample_rate_hz"
-
-        acc = body.get("accelerometer")
-        if not isinstance(acc, dict):
-            return None, "Missing accelerometer object"
-
-        t0 = acc.get("t0")
-        if isinstance(t0, bool) or not isinstance(t0, (int, float)):
-            return None, "Missing or invalid accelerometer.t0"
-        t0 = int(t0)
-
-        acc_t = acc.get("t")
-        acc_x = acc.get("x")
-        acc_y = acc.get("y")
-        acc_z = acc.get("z")
-        if not all(isinstance(arr, list) for arr in (acc_t, acc_x, acc_y, acc_z)):
-            return None, "accelerometer.t/x/y/z must be arrays"
-
-        n_acc = len(acc_t)
-        if not (len(acc_x) == n_acc and len(acc_y) == n_acc and len(acc_z) == n_acc):
-            return None, "accelerometer arrays must have equal length"
-
-        whole_seconds = n_acc // sample_rate_hz
-        if whole_seconds < 1 or whole_seconds > 5:
-            return None, "Batch duration must be between 1 and 5 whole seconds"
-
-        trimmed_n = whole_seconds * sample_rate_hz
-        xs = [float(v) for v in acc_x[:trimmed_n]]
-        ys = [float(v) for v in acc_y[:trimmed_n]]
-        zs = [float(v) for v in acc_z[:trimmed_n]]
-
-        mean_x = sum(xs) / trimmed_n
-        mean_y = sum(ys) / trimmed_n
-        mean_z = sum(zs) / trimmed_n
-        clean_acc = {
-            "x": [v - mean_x for v in xs],
-            "y": [v - mean_y for v in ys],
-            "z": [v - mean_z for v in zs],
-        }
-
-        warnings = []
-        gyro = body.get("gyroscope")
-        clean_gyro = None
-        if isinstance(gyro, dict):
-            gt = gyro.get("t")
-            gx = gyro.get("x")
-            gy = gyro.get("y")
-            gz = gyro.get("z")
-            if all(isinstance(arr, list) for arr in (gt, gx, gy, gz)):
-                n_g = len(gt)
-                if not (len(gx) == n_g and len(gy) == n_g and len(gz) == n_g):
-                    return None, "gyroscope arrays must have equal length"
-                if n_g >= trimmed_n:
-                    clean_gyro = {
-                        "x": [float(v) for v in gx[:trimmed_n]],
-                        "y": [float(v) for v in gy[:trimmed_n]],
-                        "z": [float(v) for v in gz[:trimmed_n]],
-                    }
-                elif n_g > 0:
-                    pad = trimmed_n - n_g
-                    clean_gyro = {
-                        "x": [float(v) for v in gx] + [float(gx[-1])] * pad,
-                        "y": [float(v) for v in gy] + [float(gy[-1])] * pad,
-                        "z": [float(v) for v in gz] + [float(gz[-1])] * pad,
-                    }
-                else:
-                    warnings.append("NO_GYRO")
-            else:
-                warnings.append("NO_GYRO")
-        else:
-            warnings.append("NO_GYRO")
-
-        location = body.get("location")
-        if isinstance(location, dict):
-            acc_m = location.get("accuracy")
-            if isinstance(acc_m, (int, float)) and not isinstance(acc_m, bool) and acc_m > 100:
-                warnings.append("GPS_LOW_ACCURACY")
-
-        ts = body.get("timestamp")
-        if not isinstance(ts, str) or not ts:
-            ts = _ms_to_iso(t0)
-
-        clean_batch = {
-            "device_id": device_id.strip(),
-            "t0": t0,
-            "timestamp": ts,
-            "sample_rate_hz": sample_rate_hz,
-            "location": location if isinstance(location, dict) else None,
-            "acc": clean_acc,
-            "gyro": clean_gyro,
-            "warnings": warnings,
-        }
-        return clean_batch, None
+try:
+    from botocore.exceptions import ClientError
+except ImportError:
+    class ClientError(Exception):
+        def __init__(self, error_response=None, operation_name=""):
+            super().__init__(str(error_response))
+            self.response = error_response or {}
 
 
-dynamodb = boto3.resource("dynamodb")
-events_table = dynamodb.Table(os.environ.get("TABLE_NAME", "SensorEvents"))
-alerts_table = dynamodb.Table(os.environ.get("ALERTS_TABLE_NAME", "DetectedEvents"))
-sns_client = boto3.client("sns")
-SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
+_events_table = None
+_alerts_table = None
+_raw_table = None
+_sns_client = None
+
+
+def _get_events_table():
+    global _events_table
+    if _events_table is None:
+        import boto3
+        _events_table = boto3.resource("dynamodb").Table(
+            os.environ.get("TABLE_NAME", "SensorEvents")
+        )
+    return _events_table
+
+
+def _get_alerts_table():
+    global _alerts_table
+    if _alerts_table is None:
+        import boto3
+        _alerts_table = boto3.resource("dynamodb").Table(
+            os.environ.get("ALERTS_TABLE_NAME", "DetectedEvents")
+        )
+    return _alerts_table
+
+
+def _get_raw_table():
+    global _raw_table
+    raw_name = os.environ.get("RAW_TABLE_NAME", "")
+    if not raw_name:
+        return None
+    if _raw_table is None:
+        import boto3
+        _raw_table = boto3.resource("dynamodb").Table(raw_name)
+    return _raw_table
+
+
+def _get_sns_client():
+    global _sns_client
+    if _sns_client is None:
+        import boto3
+        _sns_client = boto3.client("sns")
+    return _sns_client
 
 
 def _ms_to_iso(t_ms):
     dt = datetime.fromtimestamp(t_ms / 1000.0, tz=timezone.utc)
     return dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _is_num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
 def _to_decimal(obj):
@@ -166,6 +109,98 @@ def _response(status_code, body):
         "statusCode": status_code,
         "headers": {"Content-Type": "application/json"},
         "body": json.dumps(body, default=_json_default),
+    }
+
+
+def _extract_raw_key(body):
+    """Extract (device_id, t0_ms) from Contract v1 payload for RawBatches dedup."""
+    if not isinstance(body, dict):
+        return None
+    device_id = body.get("device_id")
+    if not isinstance(device_id, str) or not device_id.strip():
+        return None
+    acc = body.get("accelerometer")
+    if isinstance(acc, dict) and _is_num(acc.get("t0")):
+        return device_id.strip(), int(acc["t0"])
+    return None
+
+
+def _save_raw_batch(raw_table, device_id, t0, received_at_ms, raw_text, body):
+    """Store raw batch in RawBatches with attribute_not_exists dedup.
+
+    Returns True if saved, False if duplicate.
+    """
+    if raw_table is None:
+        return True
+    schema_ver = body.get("schema_version", 0)
+    item = {
+        "device_id": device_id,
+        "t0": int(t0),
+        "received_at": int(received_at_ms),
+        "schema_version": int(schema_ver) if _is_num(schema_ver) else 0,
+        "status": "received",
+        "raw": raw_text,
+    }
+    try:
+        raw_table.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(device_id)",
+        )
+        return True
+    except Exception as e:
+        resp = getattr(e, "response", None)
+        if (
+            isinstance(resp, dict)
+            and resp.get("Error", {}).get("Code") == "ConditionalCheckFailedException"
+        ):
+            return False
+        raise
+
+
+def _mark_raw_batch(raw_table, device_id, t0, status, reason=None, detail=None):
+    if raw_table is None:
+        return
+    names = {"#s": "status"}
+    values = {":s": status}
+    expr = "SET #s = :s"
+    if reason:
+        expr += ", reason = :r, detail = :d"
+        values[":r"] = reason
+        values[":d"] = detail or ""
+    try:
+        raw_table.update_item(
+            Key={"device_id": device_id, "t0": int(t0)},
+            UpdateExpression=expr,
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=values,
+        )
+    except Exception:
+        pass
+
+
+def adapt_clean_batch(clean):
+    """Bridge Simion's preprocess.py clean_batch_v1 output to process.py's expected input."""
+    sig = clean["signal"]
+    loc = clean.get("location")
+    t_start_ms = int(sig["t_start_ms"])
+
+    adapted_location = None
+    if isinstance(loc, dict):
+        adapted_location = {
+            "lat": loc.get("lat"),
+            "lon": loc.get("lon"),
+            "accuracy": loc.get("accuracy_m", loc.get("accuracy")),
+        }
+
+    return {
+        "device_id": clean["device_id"],
+        "t0": t_start_ms,
+        "timestamp": _ms_to_iso(t_start_ms),
+        "sample_rate_hz": int(sig["fs_hz"]),
+        "location": adapted_location,
+        "acc": sig["acc"],
+        "gyro": sig.get("gyro"),
+        "warnings": list(clean.get("warnings") or []),
     }
 
 
@@ -219,14 +254,21 @@ def _scan_table(table, max_items=None, max_pages=None, projection=None, attr_nam
     return items[:max_items] if max_items is not None else items
 
 
-def _fetch_device_history(device_id, t0_ms, lookback_sec):
+def _fetch_device_history(events_table, device_id, t0_ms, lookback_sec):
     start_iso = _ms_to_iso(t0_ms - lookback_sec * 1000)
     end_iso = _ms_to_iso(t0_ms - 1)
-    resp = events_table.query(
-        KeyConditionExpression=Key("device_id").eq(device_id)
-        & Key("timestamp").between(start_iso, end_iso),
-        ScanIndexForward=True,
-    )
+    if Key is not None:
+        resp = events_table.query(
+            KeyConditionExpression=Key("device_id").eq(device_id)
+            & Key("timestamp").between(start_iso, end_iso),
+            ScanIndexForward=True,
+        )
+    else:
+        resp = events_table.query(
+            device_id=device_id,
+            start_iso=start_iso,
+            end_iso=end_iso,
+        )
     items = resp.get("Items", [])
     history = []
     for item in items:
@@ -250,35 +292,84 @@ def _fetch_device_history(device_id, t0_ms, lookback_sec):
 
 
 def _handle_post_telemetry(event):
+    received_at_ms = int(time.time() * 1000)
+    raw_text = event.get("body") or ""
+    if event.get("isBase64Encoded"):
+        raw_text = base64.b64decode(raw_text).decode("utf-8")
+
     try:
-        body = json.loads(event.get("body") or "{}")
-    except json.JSONDecodeError:
-        return _response(400, {"error": "Invalid JSON body"})
+        body = json.loads(raw_text or "{}")
+    except ValueError:
+        return _response(
+            400,
+            {"status": "rejected", "reason": "SCHEMA_INVALID", "error": "Invalid JSON body"},
+        )
 
-    clean_batch, reason = preprocess_batch(body)
-    if clean_batch is None:
-        return _response(400, {"error": reason or "Invalid telemetry payload"})
+    if not isinstance(body, dict):
+        return _response(
+            400,
+            {"status": "rejected", "reason": "SCHEMA_INVALID", "error": "Payload must be a JSON object"},
+        )
 
+    # Optional RawBatches storage & deduplication on (device_id, t0)
+    raw_table = _get_raw_table()
+    raw_key = _extract_raw_key(body)
+    if raw_table is not None and raw_key is not None:
+        raw_device_id, raw_t0 = raw_key
+        if not _save_raw_batch(raw_table, raw_device_id, raw_t0, received_at_ms, raw_text, body):
+            return _response(
+                200,
+                {
+                    "status": "duplicate_ignored",
+                    "device_id": raw_device_id,
+                    "t0": raw_t0,
+                },
+            )
+
+    # Validate & clean via Simion's preprocess.py
+    clean = preprocess(body, received_at_ms)
+    if clean.get("status") != "ok":
+        reason = clean.get("reason", "SCHEMA_INVALID")
+        detail = clean.get("detail", "Invalid telemetry payload")
+        if raw_table is not None and raw_key is not None:
+            _mark_raw_batch(raw_table, raw_key[0], raw_key[1], "rejected", reason, detail)
+        return _response(
+            400,
+            {
+                "status": "rejected",
+                "reason": reason,
+                "detail": detail,
+                "error": detail,
+            },
+        )
+
+    if raw_table is not None and raw_key is not None:
+        _mark_raw_batch(raw_table, raw_key[0], raw_key[1], "preprocessed")
+
+    clean_batch = adapt_clean_batch(clean)
     device_id = clean_batch["device_id"]
     t0 = int(clean_batch["t0"])
     t0_iso = _ms_to_iso(t0)
 
-    # Deduplicate on (device_id, t0)
-    existing = events_table.get_item(
-        Key={"device_id": device_id, "timestamp": t0_iso}
-    )
-    if "Item" in existing:
-        return _response(
-            200,
-            {
-                "status": "duplicate_ignored",
-                "device_id": device_id,
-                "t0": t0,
-            },
+    events_table = _get_events_table()
+
+    # Fallback deduplication on SensorEvents (device_id, timestamp) when RawBatches is not active
+    if raw_table is None:
+        existing = events_table.get_item(
+            Key={"device_id": device_id, "timestamp": t0_iso}
         )
+        if "Item" in existing:
+            return _response(
+                200,
+                {
+                    "status": "duplicate_ignored",
+                    "device_id": device_id,
+                    "t0": t0,
+                },
+            )
 
     lta_sec = int(os.environ.get("LTA_SEC", "30"))
-    history = _fetch_device_history(device_id, t0, lta_sec + 5)
+    history = _fetch_device_history(events_table, device_id, t0, lta_sec + 5)
 
     result = process_clean_batch(clean_batch, history)
     features = result["features"]
@@ -289,12 +380,14 @@ def _handle_post_telemetry(event):
 
     correlation = None
     if triggers:
+        sns_topic_arn = os.environ.get("SNS_TOPIC_ARN", "")
+        sns_client = _get_sns_client() if sns_topic_arn else None
         correlation = correlate_triggers(
             triggers,
             events_table,
-            alerts_table,
+            _get_alerts_table(),
             sns_client=sns_client,
-            sns_topic_arn=SNS_TOPIC_ARN,
+            sns_topic_arn=sns_topic_arn,
         )
 
     max_pga = max((f["pga"] for f in features), default=0.0)
@@ -306,6 +399,7 @@ def _handle_post_telemetry(event):
             "windows_processed": len(features),
             "max_pga": round(max_pga, 6),
             "triggers_count": len(triggers),
+            "warnings": clean_batch["warnings"],
             "correlation": correlation,
         },
     )
@@ -313,7 +407,7 @@ def _handle_post_telemetry(event):
 
 def _handle_get_events():
     items = _scan_table(
-        events_table,
+        _get_events_table(),
         max_items=500,
         max_pages=3,
         projection=EVENTS_PROJECTION,
@@ -324,12 +418,12 @@ def _handle_get_events():
 
 
 def _handle_get_alerts():
-    items = _scan_table(alerts_table)
+    items = _scan_table(_get_alerts_table())
     items.sort(key=lambda x: str(x.get("timestamp", "")), reverse=True)
     return _response(200, {"alerts": items[:20]})
 
 
-def handler(event, context):
+def lambda_handler(event, context):
     http_ctx = event.get("requestContext", {}).get("http", {})
     method = http_ctx.get("method", "GET").upper()
     path = event.get("rawPath") or http_ctx.get("path") or "/"
@@ -344,3 +438,7 @@ def handler(event, context):
         return _response(404, {"error": f"Route not found: {method} {path}"})
     except Exception as e:
         return _response(500, {"error": str(e)})
+
+
+# Backwards-compatible alias
+handler = lambda_handler

@@ -47,6 +47,23 @@ resource "aws_dynamodb_table" "detected_events" {
   }
 }
 
+# Batch-uri brute: cheie device_id + t0 (epoch ms, numar) -> deduplicare prin attribute_not_exists
+resource "aws_dynamodb_table" "raw_batches" {
+  name         = "RawBatches"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "device_id"
+  range_key    = "t0"
+
+  attribute {
+    name = "device_id"
+    type = "S"
+  }
+  attribute {
+    name = "t0"
+    type = "N"
+  }
+}
+
 resource "aws_sns_topic" "quake_alerts" {
   name = "quake-alerts-topic"
 }
@@ -58,10 +75,11 @@ resource "aws_sns_topic_subscription" "email_alert" {
   endpoint  = var.alert_email
 }
 
+# Doar codul Lambda (fara teste / __pycache__): include ingest.py, preprocess.py, process.py, correlate.py
 data "archive_file" "lambda_zip" {
   type        = "zip"
   source_dir  = "${path.module}/../src/backend"
-  excludes    = ["test_*.py", "__pycache__/*"]
+  excludes    = ["test_*.py", "__pycache__/*", "*.pyc"]
   output_path = "${path.module}/ingest.zip"
 }
 
@@ -99,7 +117,8 @@ resource "aws_iam_role_policy" "dynamodb_access" {
         ]
         Resource = [
           aws_dynamodb_table.sensor_events.arn,
-          aws_dynamodb_table.detected_events.arn
+          aws_dynamodb_table.detected_events.arn,
+          aws_dynamodb_table.raw_batches.arn
         ]
       },
       {
@@ -114,7 +133,7 @@ resource "aws_iam_role_policy" "dynamodb_access" {
 resource "aws_lambda_function" "ingest" {
   function_name    = "quake-telemetry-ingest"
   role             = aws_iam_role.lambda_exec.arn
-  handler          = "ingest.handler"
+  handler          = "ingest.lambda_handler"
   runtime          = "python3.12"
   timeout          = 15
   memory_size      = 512
@@ -122,10 +141,12 @@ resource "aws_lambda_function" "ingest" {
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
 
   environment {
-    variables = {
+    variables = merge(local.pipeline_env, {
       TABLE_NAME            = aws_dynamodb_table.sensor_events.name
       ALERTS_TABLE_NAME     = aws_dynamodb_table.detected_events.name
+      RAW_TABLE_NAME        = aws_dynamodb_table.raw_batches.name
       SNS_TOPIC_ARN         = aws_sns_topic.quake_alerts.arn
+      PREPROCESS_ENABLED    = var.preprocess_enabled ? "1" : "0"
       SPIKE_ACC_THRESHOLD   = "2.5"
       STATIONARY_GYRO_RMS   = "1.0"
       STA_LTA_RATIO         = "3.0"
@@ -137,7 +158,7 @@ resource "aws_lambda_function" "ingest" {
       QUORUM_MIN_DEVICES    = "2"
       QUORUM_MIN_RATIO      = "0.5"
       ALERT_COOLDOWN_SEC    = "30"
-    }
+    })
   }
 }
 
@@ -188,6 +209,10 @@ resource "aws_lambda_permission" "api_gw" {
   function_name = aws_lambda_function.ingest.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
+}
+
+output "raw_batches_table" {
+  value = aws_dynamodb_table.raw_batches.name
 }
 
 output "api_url" {
