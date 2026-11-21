@@ -43,7 +43,8 @@ export function deriveView(snapshot: DashboardSnapshot): DashboardView {
   let peakNow: DashboardView['peakNow'] = null
   let lastReceivedAt: number | null = null
   for (const t of snapshot.latest) {
-    const received = Date.parse(t.receivedAt)
+    // Without a server receive time, the phone's own timestamp is the best estimate.
+    const received = Date.parse(t.receivedAt ?? t.recordedAt)
     if (lastReceivedAt === null || received > lastReceivedAt) lastReceivedAt = received
     const device = deviceById.get(t.deviceId)
     if (device?.online && (!peakNow || t.accelMagnitude > peakNow.telemetry.accelMagnitude)) {

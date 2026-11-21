@@ -1,6 +1,6 @@
 # QuakeMeUp, dashboard
 
-Dashboard-ul rețelei de detectare a cutremurelor. Telefoanele Android trimit accelerometru, giroscop, GPS și baterie prin AWS IoT Core → Lambda → DynamoDB; dashboard-ul citește un API REST la fiecare 3 secunde.
+Dashboard-ul rețelei de detectare a cutremurelor. Telefoanele Android trimit accelerometru, giroscop, GPS și baterie prin AWS IoT Core → Lambda → DynamoDB; dashboard-ul citește API-ul la fiecare 2 secunde.
 
 ## Pornire
 
@@ -10,11 +10,28 @@ npm run dev        # http://localhost:5173
 npm run build      # verificare tipuri + build de producție în dist/
 ```
 
-Fără `VITE_API_URL`, dashboard-ul arată structura goală și un mesaj de configurare.
+Fără `VITE_EVENTS_URL` sau `VITE_API_URL`, dashboard-ul arată structura goală și un mesaj de configurare.
 
 `#dispozitiv=<id>` în URL deschide direct profilul unui dispozitiv.
 
-## Conectare la API-ul real
+## Sursa de date acum: `GET /events`
+
+Backend-ul are deocamdată un singur endpoint de citire. În `.env.local`:
+
+```
+VITE_EVENTS_URL=https://u90us4gdu6.execute-api.eu-central-1.amazonaws.com/events
+```
+
+Dashboard-ul îl apelează cu `fetch()` la fiecare 2 secunde (`POLL_INTERVAL_MS` în `src/config.ts`), fără suprapuneri și cu pauză când tab-ul e ascuns. Răspunsul e o listă de citiri brute (`device_id`, `timestamp`, `value` = |a| cu gravitație), așa că `src/api/events.ts` calculează în browser:
+
+- accelerația fără gravitație: |value − 9,81|
+- dispozitivele (online dacă au trimis în ultimele 30 s), poziția din `metadata.location` dacă există
+- depășirile de prag (≥ 1,0 m/s²) și cutremurele (≥ 3 dispozitive în 10 s)
+- istoricul, dintr-un buffer în memorie de 2 ore care se umple cât timp pagina e deschisă (endpoint-ul dă doar 50 de citiri)
+
+Pragurile sunt în `src/config.ts`. Câmpurile pe care endpoint-ul nu le trimite (giroscop, baterie, latență) apar ca „nu e raportat”.
+
+## Conectare la API-ul REST complet (viitor)
 
 Copiază `.env.example` în `.env.local` și setează:
 

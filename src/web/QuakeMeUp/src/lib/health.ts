@@ -32,7 +32,7 @@ interface ApiInput {
 
 /** Backend/API state, from the dashboard's own polling. */
 export function apiHealth({ apiConfigured, hasData, error, failingSince, now }: ApiInput): HealthReport {
-  if (!apiConfigured) return { state: 'unknown', detail: 'VITE_API_URL nu este setat' }
+  if (!apiConfigured) return { state: 'unknown', detail: 'VITE_EVENTS_URL nu este setat' }
   if (error && failingSince) {
     const failingFor = now - failingSince
     if (!hasData || failingFor >= API_OFFLINE_AFTER_MS) {
@@ -68,9 +68,10 @@ export function dbHealth({ status, api, serverNow, lastWriteAt }: DbInput): Heal
       return { state: 'degraded', detail: `ultima scriere acum ${formatElapsed(lastWriteAt, serverNow)}` }
     }
   }
-  if (status.latencyP95Ms > SLOW_INGEST_MS) {
+  if (status.latencyP95Ms !== null && status.latencyP95Ms > SLOW_INGEST_MS) {
     return { state: 'degraded', detail: `scrieri lente, p95 ${Math.round(status.latencyP95Ms)} ms` }
   }
+  if (status.devicesOnline === 0) return { state: 'online', detail: 'citirile răspund; niciun senzor nu scrie acum' }
   return { state: 'online', detail: 'citiri și scrieri la zi' }
 }
 

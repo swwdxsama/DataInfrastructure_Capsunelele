@@ -63,7 +63,7 @@ export function DevicePanel({
   }, [onClose])
 
   const own = triggers.filter((t) => t.deviceId === device.id)
-  const latency = telemetry ? Date.parse(telemetry.receivedAt) - Date.parse(telemetry.recordedAt) : null
+  const latency = telemetry?.receivedAt ? Date.parse(telemetry.receivedAt) - Date.parse(telemetry.recordedAt) : null
 
   return (
     <aside className="device-panel" aria-labelledby="device-panel-title">
@@ -105,23 +105,42 @@ export function DevicePanel({
           </p>
           <dl className="device-panel-grid">
             <Vector label={`Accelerometru (${ACCEL_UNIT})`} v={telemetry.accel} digits={3} />
-            <Vector label="Giroscop (rad/s)" v={telemetry.gyro} digits={4} total={vectorNorm(telemetry.gyro)} />
+            <Vector
+              label="Giroscop (rad/s)"
+              v={telemetry.gyro}
+              digits={4}
+              total={telemetry.gyro ? vectorNorm(telemetry.gyro) : undefined}
+            />
             <div className="device-panel-field">
               <dt>Baterie</dt>
               <dd>
-                {formatPercent(telemetry.battery.level)}
-                <span className="secondary">{telemetry.battery.charging ? ' se încarcă' : ' pe baterie'}</span>
+                {telemetry.battery ? (
+                  <>
+                    {formatPercent(telemetry.battery.level)}
+                    <span className="secondary">{telemetry.battery.charging ? ' se încarcă' : ' pe baterie'}</span>
+                  </>
+                ) : (
+                  <span className="secondary">nu e raportată</span>
+                )}
               </dd>
             </div>
             <div className="device-panel-field">
               <dt>Latență mesaj</dt>
-              <dd>{latency !== null ? `${Math.round(latency)} ms` : '–'}</dd>
+              <dd>{latency !== null ? `${Math.round(latency)} ms` : <span className="secondary">nu e raportată</span>}</dd>
             </div>
             <div className="device-panel-field device-panel-wide">
               <dt>GPS</dt>
               <dd>
-                {formatCoords(telemetry.gps)}
-                <span className="secondary"> precizie ±{formatNumber(telemetry.gps.accuracy, 0)} m</span>
+                {telemetry.gps ? (
+                  <>
+                    {formatCoords(telemetry.gps)}
+                    {telemetry.gps.accuracy !== null && (
+                      <span className="secondary"> precizie ±{formatNumber(telemetry.gps.accuracy, 0)} m</span>
+                    )}
+                  </>
+                ) : (
+                  <span className="secondary">fără GPS</span>
+                )}
               </dd>
             </div>
           </dl>
@@ -183,7 +202,7 @@ export function DevicePanel({
           </div>
           <div className="device-panel-field device-panel-wide">
             <dt>Poziție înregistrată</dt>
-            <dd>{formatCoords(device.location)}</dd>
+            <dd>{device.location ? formatCoords(device.location) : <span className="secondary">necunoscută</span>}</dd>
           </div>
           {telemetry && (
             <div className="device-panel-field device-panel-wide">
@@ -197,7 +216,15 @@ export function DevicePanel({
   )
 }
 
-function Vector({ label, v, digits, total }: { label: string; v: Vector3; digits: number; total?: number }) {
+function Vector({ label, v, digits, total }: { label: string; v: Vector3 | null; digits: number; total?: number }) {
+  if (!v) {
+    return (
+      <div className="device-panel-field device-panel-wide">
+        <dt>{label}</dt>
+        <dd className="secondary">nu e raportat pe axe</dd>
+      </div>
+    )
+  }
   return (
     <div className="device-panel-field device-panel-wide">
       <dt>{label}</dt>

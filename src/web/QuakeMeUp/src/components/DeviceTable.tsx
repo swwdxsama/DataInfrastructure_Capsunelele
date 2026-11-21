@@ -64,9 +64,9 @@ export function DeviceTable({ devices, latestById, stateById, selectedId, server
                   <StatusLabel state={state} />
                 </td>
                 <td className="num device-table-accel">{t ? formatNumber(t.accelMagnitude, 2) : '–'}</td>
-                <td className="num">{t ? formatNumber(vectorNorm(t.gyro), 3) : '–'}</td>
+                <td className="num">{t?.gyro ? formatNumber(vectorNorm(t.gyro), 3) : '–'}</td>
                 <td className="num">
-                  {t ? (
+                  {t?.battery ? (
                     <>
                       {formatPercent(t.battery.level)}
                       {t.battery.charging && <Plug />}

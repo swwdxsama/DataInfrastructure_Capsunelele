@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { POLL_INTERVAL_MS } from '../config'
 import { useNow } from '../hooks/useNow'
 import type { DashboardView } from '../lib/derive'
 import { formatAgo, formatElapsed, formatNumber, formatTime } from '../lib/format'
@@ -46,11 +47,13 @@ export function SystemStatus({ status, view, apiConfigured, updatedAt, failingSi
 
         <Item label="API backend" report={api} />
 
-        <Item label="Bază de date (DynamoDB)" report={db} note="dedus din /status și ora ultimei scrieri" />
+        <Item label="Bază de date (DynamoDB)" report={db} note="dedus din răspunsul API și ora ultimei citiri stocate" />
 
         <Item label="Ultimul răspuns API">
           <strong>{updatedAt ? formatAgo(updatedAt, now) : NONE}</strong>
-          {updatedAt && <span className="system-detail">la {formatTime(updatedAt)} UTC, la fiecare 3 s</span>}
+          {updatedAt && <span className="system-detail">
+              la {formatTime(updatedAt)} UTC, la fiecare {POLL_INTERVAL_MS / 1000} s
+            </span>}
         </Item>
 
         <Item label="Ingestie">
@@ -59,7 +62,9 @@ export function SystemStatus({ status, view, apiConfigured, updatedAt, failingSi
               <strong>{formatNumber(status.messagesPerSecond, 1)}</strong>
               <span className="system-of"> msg/s</span>
               <span className="system-detail">
-                latență {Math.round(status.latencyP50Ms)} / {Math.round(status.latencyP95Ms)} ms (p50 / p95)
+                {status.latencyP50Ms !== null && status.latencyP95Ms !== null
+                  ? `latență ${Math.round(status.latencyP50Ms)} / ${Math.round(status.latencyP95Ms)} ms (p50 / p95)`
+                  : 'latență nemăsurată de API'}
               </span>
             </>
           ) : (
@@ -70,7 +75,7 @@ export function SystemStatus({ status, view, apiConfigured, updatedAt, failingSi
 
       {!apiConfigured && (
         <p className="system-notice" data-kind="setup">
-          API-ul nu este configurat. Setează VITE_API_URL în .env.local ca să vezi date.
+          API-ul nu este configurat. Setează VITE_EVENTS_URL în .env.local ca să vezi date.
         </p>
       )}
       {apiConfigured && error && failingSince && (

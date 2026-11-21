@@ -25,6 +25,7 @@ const ROMANIA: [[number, number], [number, number]] = [
 
 export default function DeviceMap({ devices, stateById, selectedId, activeEvent, events, onSelect }: Props) {
   const palette = usePalette()
+  const withoutGps = devices.filter((d) => !d.location).length
   const past = events.filter((e) => e.status === 'ended' && e.epicenter)
   const fillFor: Record<DeviceState, string> = {
     above: palette.alert,
@@ -83,6 +84,7 @@ export default function DeviceMap({ devices, stateById, selectedId, activeEvent,
         )}
 
         {devices.map((d) => {
+          if (!d.location) return null
           const state = stateById.get(d.id) ?? 'offline'
           const selected = d.id === selectedId
           return (
@@ -120,6 +122,11 @@ export default function DeviceMap({ devices, stateById, selectedId, activeEvent,
         <li>
           <span className="dot" data-state="offline" /> Offline
         </li>
+        {withoutGps > 0 && (
+          <li>
+            {withoutGps} {withoutGps === 1 ? 'senzor' : 'senzori'} fără GPS, doar în tabel
+          </li>
+        )}
         {past.length > 0 && (
           <li>
             <span className="device-map-legend-past" /> Cutremur anterior

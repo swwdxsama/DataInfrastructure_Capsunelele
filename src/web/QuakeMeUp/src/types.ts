@@ -17,8 +17,8 @@ export interface Device {
   kind: DeviceKind
   /** Hardware model reported by the phone, e.g. "Pixel 7". */
   model: string | null
-  /** Registered position of the sensor. */
-  location: GeoPoint
+  /** Position of the sensor; null when the phone never sent GPS. */
+  location: GeoPoint | null
   /** Human-readable place, e.g. "Focșani". */
   locality: string
   online: boolean
@@ -37,22 +37,25 @@ export interface Telemetry {
   deviceId: string
   /** Clock of the phone when the reading was taken. */
   recordedAt: string
-  /** Clock of the backend when the message was stored. */
-  receivedAt: string
-  accel: Vector3
+  /** Clock of the backend when the message was stored; null when the API does not report it. */
+  receivedAt: string | null
+  /** Per-axis values; null when only the magnitude is available. */
+  accel: Vector3 | null
   /** Euclidean norm of `accel`. */
   accelMagnitude: number
-  /** Angular velocity, rad/s. */
-  gyro: Vector3
+  /** Angular velocity, rad/s. Null when not reported. */
+  gyro: Vector3 | null
   battery: {
     /** 0..1 */
     level: number
     charging: boolean
-  }
-  gps: GeoPoint & {
-    /** Horizontal accuracy in metres. */
-    accuracy: number
-  }
+  } | null
+  gps:
+    | (GeoPoint & {
+        /** Horizontal accuracy in metres, when known. */
+        accuracy: number | null
+      })
+    | null
 }
 
 /** A single device crossing the acceleration threshold. */
@@ -87,8 +90,9 @@ export interface SystemStatus {
   devicesTotal: number
   devicesOnline: number
   messagesPerSecond: number
-  latencyP50Ms: number
-  latencyP95Ms: number
+  /** Device-to-database latency; null when the API does not report receive times. */
+  latencyP50Ms: number | null
+  latencyP95Ms: number | null
   triggerThreshold: number
 }
 

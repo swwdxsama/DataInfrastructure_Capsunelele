@@ -88,9 +88,9 @@ export function LatestValues({ view, apiConfigured, error, updatedAt }: Props) {
             ? `Epicentru estimat ${formatCoords(latestEvent.epicenter)}`
             : latestEvent
               ? 'Epicentrul nu a putut fi estimat'
-              : peakNow
+              : peakNow?.telemetry.gps
                 ? `GPS ${formatCoords(peakNow.telemetry.gps)}`
-                : 'Fără poziție'
+                : 'Fără poziție GPS'
         }
       />
 

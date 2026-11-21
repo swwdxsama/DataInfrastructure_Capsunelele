@@ -1,7 +1,8 @@
 /** Unit used everywhere acceleration is displayed. The API sends m/s². */
 export const ACCEL_UNIT = 'm/s²'
 
-export const POLL_INTERVAL_MS = 3000
+/** The phones send a reading every 2 s; polling at the same pace shows each one. */
+export const POLL_INTERVAL_MS = 2000
 
 /** Length of the acceleration charts. */
 export const HISTORY_WINDOW_S = 300
@@ -35,3 +36,25 @@ export const HISTORY_RANGES: readonly HistoryRange[] = [
 /** How often the 1-hour history is refetched. */
 export const HOUR_HISTORY_POLL_MS = 15_000
 
+/*
+ * Settings for the single-endpoint mode (VITE_EVENTS_URL): GET /events returns
+ * raw readings only, so the browser derives devices, triggers and earthquakes.
+ * When the backend computes these itself, these values stop being used.
+ */
+
+/** Standard gravity. Readings are |a| including gravity, so a phone at rest reads ≈ 9.81. */
+export const GRAVITY_MS2 = 9.80665
+
+/** Dynamic acceleration (|a| − g) at or above this counts as a trigger, in m/s². */
+export const TRIGGER_THRESHOLD_MS2 = 1.0
+
+/** A device counts as online if its newest reading is at most this old. */
+export const ONLINE_WITHIN_MS = 30_000
+
+/** An earthquake: at least this many distinct devices triggering… */
+export const QUAKE_MIN_DEVICES = 3
+/** …within this many milliseconds of the first trigger. */
+export const QUAKE_WINDOW_MS = 10_000
+
+/** Readings are kept in memory this long, so history builds up while the page is open. */
+export const READING_BUFFER_MS = 2 * 60 * 60 * 1000

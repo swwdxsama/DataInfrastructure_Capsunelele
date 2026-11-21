@@ -7,9 +7,8 @@ import type {
   Telemetry,
   Trigger,
 } from '../types'
-import { ApiError, type DashboardApi, type HistoryQuery } from './types'
-
-const REQUEST_TIMEOUT_MS = 8000
+import { fetchJson } from './fetchJson'
+import type { DashboardApi, HistoryQuery } from './types'
 
 /**
  * REST client for the backend behind API Gateway.
@@ -25,25 +24,7 @@ const REQUEST_TIMEOUT_MS = 8000
 export function createHttpApi(baseUrl: string): DashboardApi {
   const root = baseUrl.replace(/\/+$/, '')
 
-  async function get<T>(path: string, signal: AbortSignal): Promise<T> {
-    let res: Response
-    try {
-      res = await fetch(`${root}${path}`, {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
-      })
-    } catch (err) {
-      if (signal.aborted) throw err
-      if (err instanceof DOMException && err.name === 'TimeoutError') {
-        throw new ApiError(`API-ul nu a răspuns în ${REQUEST_TIMEOUT_MS / 1000} secunde (${path}).`)
-      }
-      throw new ApiError(`API-ul nu poate fi contactat (${path}).`)
-    }
-    if (!res.ok) {
-      throw new ApiError(`API-ul a răspuns cu ${res.status} pentru ${path}.`, res.status)
-    }
-    return (await res.json()) as T
-  }
+  const get = <T,>(path: string, signal: AbortSignal) => fetchJson<T>(`${root}${path}`, signal, path)
 
   function historyPath({ deviceId, windowSec }: HistoryQuery) {
     const params = new URLSearchParams({ windowSec: String(windowSec) })
