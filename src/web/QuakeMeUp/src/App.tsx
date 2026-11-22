@@ -82,7 +82,6 @@ export default function App() {
           status={data?.status ?? null}
           view={view}
           apiConfigured={apiConfigured}
-          updatedAt={snapshot.updatedAt}
           failingSince={snapshot.failingSince}
           error={snapshot.error}
         />

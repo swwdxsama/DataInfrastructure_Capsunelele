@@ -115,6 +115,8 @@ export interface SystemStatus {
   devicesArmed?: number | null
   devicesUnarmed?: number | null
   messagesPerSecond: number
+  /** How long the last snapshot request took, measured by the dashboard; null when not measured. */
+  responseMs?: number | null
   /** Device-to-database latency; null when the API does not report receive times. */
   latencyP50Ms: number | null
   latencyP95Ms: number | null

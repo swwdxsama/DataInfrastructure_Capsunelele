@@ -221,12 +221,18 @@ export function createEventsApi(url: string): DashboardApi {
     }
   }
 
+  /** Duration of the last GET /events, the request the dashboard depends on. */
+  let responseMs: number | null = null
+
+  async function fetchEvents(signal: AbortSignal) {
+    const started = performance.now()
+    const body = await fetchJson<{ events?: RawReading[] } | RawReading[]>(url, signal, 'GET /events')
+    responseMs = Math.round(performance.now() - started)
+    return body
+  }
+
   async function poll(signal: AbortSignal) {
-    const [body] = await Promise.all([
-      fetchJson<{ events?: RawReading[] } | RawReading[]>(url, signal, 'GET /events'),
-      pollStates(signal),
-      pollAlerts(signal),
-    ])
+    const [body] = await Promise.all([fetchEvents(signal), pollStates(signal), pollAlerts(signal)])
     const items = Array.isArray(body) ? body : (body.events ?? [])
 
     for (const raw of items) {
@@ -333,6 +339,7 @@ export function createEventsApi(url: string): DashboardApi {
       devicesArmed: deviceStates ? online.filter((d) => d.arming?.state === 'armed').length : null,
       devicesUnarmed: deviceStates ? online.filter((d) => d.arming?.state === 'unarmed').length : null,
       messagesPerSecond: recentCount / 60,
+      responseMs,
       latencyP50Ms: null,
       latencyP95Ms: null,
       triggerThreshold: TRIGGER_THRESHOLD_MS2,
