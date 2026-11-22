@@ -70,6 +70,7 @@ interface RawReading {
   timestamp?: string
   value?: number | string
   pga?: number | string
+  is_trigger?: boolean
   gyro_rms?: number | string | null
   gyro_peak?: number | string | null
   lat?: number | string | null
@@ -112,6 +113,8 @@ interface Reading {
   t: number
   /** Dynamic acceleration, gravity removed. */
   accel: number
+  /** Authoritative backend trigger verdict (null only for legacy rows without is_trigger). */
+  isTrigger: boolean | null
   gyro: Telemetry['gyro']
 }
 
@@ -249,9 +252,10 @@ export function createEventsApi(url: string): DashboardApi {
 
       const gyroRms = toNumber(raw.gyro_rms)
       const gyro = gyroRms !== null ? { rms: gyroRms, peak: toNumber(raw.gyro_peak) } : null
+      const isTrigger = typeof raw.is_trigger === 'boolean' ? raw.is_trigger : null
 
       const key = `${deviceId}|${t}`
-      if (!readings.has(key)) readings.set(key, { deviceId, t, accel, gyro })
+      if (!readings.has(key)) readings.set(key, { deviceId, t, accel, isTrigger, gyro })
       if (!firstSeen.has(deviceId) || t < firstSeen.get(deviceId)!) firstSeen.set(deviceId, t)
 
       const metaLoc = raw.metadata?.location
@@ -356,7 +360,9 @@ export function createEventsApi(url: string): DashboardApi {
   }
 
   function detect(all: Reading[], now: number): { triggers: Trigger[]; events: Event[] } {
-    const above = all.filter((r) => r.accel >= TRIGGER_THRESHOLD_MS2)
+    const above = all.filter((r) =>
+      r.isTrigger !== null ? r.isTrigger : r.accel >= TRIGGER_THRESHOLD_MS2,
+    )
     const triggers: Trigger[] = above.map((r) => ({
       id: `${r.deviceId}|${r.t}`,
       deviceId: r.deviceId,

@@ -33,11 +33,11 @@ flowchart LR
 - **Edge Collection (`src/mobile/App.tsx`)**: Samples accelerometer (`m/s²`, converted from `g × 9.81`), gyroscope (`rad/s`), and foreground GPS at 20 Hz, packing 40-sample (2-second) columnar Contract v1 batches with `device_id`, `event_type`, `value`, `unit`, and UTC `timestamp`. Includes an indoor GPS fallback (tagged with `accuracy: 999` until real GPS locks), optional `x-api-key` header support, a bounded 20-batch retry queue (drops HTTP `400`/`401`, retries `5xx`/timeouts preserving `t0` for idempotent deduplication), `AbortController` timeouts, and `expo-keep-awake`.
 - **Signal Processing & False-Positive Rejection (`src/backend/`)**:
   - `preprocess.py`: Schema/freshness validation, unit normalization, physical bounds check, uniform 20 Hz resampling, gap detection, gravity removal, and 1 Hz high-pass filtering.
-  - `process.py`: Per-device arming gate (`DeviceState`), 1-second windowing, RMS, PGA, variance, pure-Python DFT dominant frequency (1–10 Hz), STA/LTA ratio, and gyroscope/tilt rejection to filter out pocket/hand movement.
-  - `correlate.py`: Pure-Python Haversine spatial/temporal quorum across nearby active devices with per-zone cooldown deduplication.
+  - `process.py`: Per-device arming gate (`DeviceState`), 1-second windowing, RMS, PGA, variance, pure-Python 3-axis signed DFT dominant frequency (1–8 Hz), STA/LTA ratio, sustained multi-second confirmation (`MIN_SUSTAINED_WINDOWS = 2`, `MIN_ACTIVE_FRACTION = 0.50`), and gyroscope/tilt/crest-factor rejection to filter out pocket/hand movement and brief taps.
+  - `correlate.py`: Pure-Python Haversine spatial/temporal quorum across nearby active devices with onset synchronization and per-zone cooldown deduplication.
   - `dispatch.py`: Subscribed to `quake-alerts-topic`; reverse-geocodes `(lat, lon)` to a human-readable neighborhood + city via OpenStreetMap Nominatim (with safe coordinate fallback) and places an automated voice dispatch call via Twilio (Polly TTS) or AWS End User Messaging Voice.
-- **Web Dashboard (`src/web/QuakeMeUp/`)**: Publicly hosted on S3 + CloudFront. Displays live device context (IDs, armed/unarmed status, locality, interactive Leaflet map), latest acceleration values and last-updated timestamps, real-time & historical acceleration charts, trigger timeline, and persistent earthquake history.
-- **Reproducible IaC & CI/CD (`infrastructure/`, `.github/workflows/`)**: Full Terraform configuration with remote S3 state + DynamoDB locking and GitHub Actions OIDC deployment (no static AWS keys in the repository).
+- **Web Dashboard (`src/web/QuakeMeUp/`)**: Publicly hosted on S3 + CloudFront. Displays live pipeline health (`Sensors → DynamoDB → API` status bar with explicit `503 db_unavailable` detection), device context (IDs, armed/unarmed status, locality, interactive Leaflet map), latest acceleration values and last-updated timestamps, deeper real-time & historical acceleration charts (`GET /events` returns up to 300/500 latest points via `RecentEventsIndex` GSI), backend-authoritative trigger timeline (`is_trigger`), and persistent earthquake history (`GET /alerts`).
+- **Reproducible IaC & CI/CD (`infrastructure/`, `.github/workflows/`)**: Full Terraform configuration with remote S3 state + DynamoDB locking and GitHub Actions OIDC deployment (no static AWS keys in the repository), including backend `ruff` + `pytest`, dashboard `eslint` + `vitest` + `vite build`, mobile `tsc --noEmit`, `gitleaks` secret scanning, `terraform fmt/validate/apply`, and post-deploy live HTTP smoke tests.
 
 ---
 
@@ -45,14 +45,14 @@ flowchart LR
 
 ```text
 DataInfrastructure_Capsunelele/
-├── .github/workflows/       # CI (ruff, pytest, terraform fmt/validate, web lint/build) & CD (deploy.yml)
+├── .github/workflows/       # CI (ruff, pytest, vitest, mobile tsc, gitleaks, terraform) & CD (deploy + smoke test)
 ├── infrastructure/          # Terraform IaC (Lambda, DynamoDB, API Gateway, SNS, S3, CloudFront, OIDC bootstrap)
 ├── presentation/            # Official hackathon presentation (DataInfrastructure_Capsunelele.pptx)
 ├── src/
 │   ├── backend/             # Pure-Python 3.12 AWS Lambda modules (ingest, preprocess, process, correlate, dispatch)
 │   ├── mobile/              # Cross-platform Expo React Native (TypeScript) sensor collector app
 │   └── web/QuakeMeUp/       # React + Vite + TypeScript live seismic dashboard
-├── tests/                   # Automated pytest test suite (51 tests)
+├── tests/                   # Automated pytest test suite (55 backend tests)
 └── tools/                   # Offline batch export & replay utilities
 ```
 
@@ -131,15 +131,15 @@ npx expo start --tunnel ngrok
 
 ### Run Automated Tests & Linters
 ```bash
-# Backend lint & unit/integration tests (51 tests)
+# Backend lint & unit/integration tests (55 tests)
 ruff check .
 pytest -v
 
 # Mobile TypeScript check
 cd src/mobile && npx tsc --noEmit
 
-# Dashboard lint & production build
-cd src/web/QuakeMeUp && npm run lint && npm run build
+# Dashboard lint, Vitest unit tests & production build
+cd src/web/QuakeMeUp && npm run lint && npm test && npm run build
 ```
 
 ---
@@ -150,4 +150,4 @@ cd src/web/QuakeMeUp && npm run lint && npm run build
 - **Voice Dispatch & Geocoding**: Twilio Programmable Voice (Amazon Polly TTS), AWS End User Messaging Voice (`pinpoint-sms-voice-v2`), OpenStreetMap Nominatim Reverse Geocoding.
 - **Mobile**: React Native, Expo SDK, TypeScript, `expo-sensors`, `expo-location`, `expo-keep-awake`.
 - **Frontend**: React 19, TypeScript, Vite, Recharts, Leaflet / React-Leaflet.
-- **CI/CD & Quality**: GitHub Actions, `pytest`, `ruff`, ESLint, `tsc`, `terraform fmt` / `validate`.
+- **CI/CD & Quality**: GitHub Actions, `pytest`, `ruff`, `vitest`, ESLint, `tsc`, Gitleaks, `terraform fmt` / `validate`, automated post-deploy smoke tests.

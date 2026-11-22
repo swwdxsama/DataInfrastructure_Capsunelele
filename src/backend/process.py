@@ -39,7 +39,7 @@ def _load_config(config=None):
         # Seismic signature filters (reject typing / table knocks / single impulses)
         "MAX_CREST_FACTOR": _f("MAX_CREST_FACTOR", 3.5),
         "ACTIVE_ACC_THRESHOLD": _f("ACTIVE_ACC_THRESHOLD", 0.6),
-        "MIN_ACTIVE_FRACTION": _f("MIN_ACTIVE_FRACTION", 0.30),
+        "MIN_ACTIVE_FRACTION": _f("MIN_ACTIVE_FRACTION", 0.50),
         "MIN_HORIZONTAL_RATIO": _f("MIN_HORIZONTAL_RATIO", 0.30),
         "SEISMIC_FREQ_MIN_HZ": _i("SEISMIC_FREQ_MIN_HZ", 1),
         "SEISMIC_FREQ_MAX_HZ": _i("SEISMIC_FREQ_MAX_HZ", 8),
