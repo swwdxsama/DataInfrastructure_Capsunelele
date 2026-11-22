@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allow synthetic mock credentials in unit tests"
+paths = [
+  '''^src/backend/test_process\.py$''',
+  '''^tests/test_dispatch\.py$''',
+]
