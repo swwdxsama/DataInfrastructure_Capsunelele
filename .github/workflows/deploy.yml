@@ -127,6 +127,16 @@ jobs:
       - name: Invalidate CloudFront
         run: aws cloudfront create-invalidation --distribution-id "${{ needs.infra.outputs.distribution_id }}" --paths "/index.html" "/"
 
+      - name: Post-deploy smoke test
+        env:
+          API_URL: ${{ needs.infra.outputs.api_url }}
+          DASHBOARD_URL: ${{ needs.infra.outputs.dashboard_url }}
+        run: |
+          curl -fsS "$API_URL/events" | head -c 200 && echo ""
+          curl -fsS "$API_URL/devices" | head -c 200 && echo ""
+          curl -fsS "$API_URL/alerts" | head -c 200 && echo ""
+          curl -fsSI "$DASHBOARD_URL" | head -n 5
+
       - name: Summary
         run: |
           echo "Dashboard: ${{ needs.infra.outputs.dashboard_url }}" >> "$GITHUB_STEP_SUMMARY"

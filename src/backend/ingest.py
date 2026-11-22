@@ -801,7 +801,19 @@ def _handle_post_telemetry(event):
     )
 
 
-def _handle_get_events():
+def _parse_events_limit(event, default=300, max_limit=500):
+    params = (event or {}).get("queryStringParameters") or {}
+    raw = params.get("limit") if isinstance(params, dict) else None
+    if raw is None:
+        return default
+    try:
+        return max(1, min(int(raw), max_limit))
+    except (TypeError, ValueError):
+        return default
+
+
+def _handle_get_events(event=None):
+    limit = _parse_events_limit(event)
     table = _get_events_table()
     if Key is not None and hasattr(table, "query"):
         try:
@@ -809,7 +821,7 @@ def _handle_get_events():
                 IndexName=RECENT_EVENTS_INDEX,
                 KeyConditionExpression=Key("gsi_pk").eq(RECENT_EVENTS_PK),
                 ScanIndexForward=False,
-                Limit=50,
+                Limit=limit,
                 ProjectionExpression=EVENTS_PROJECTION,
                 ExpressionAttributeNames=EVENTS_ATTR_NAMES,
             )
@@ -832,7 +844,7 @@ def _handle_get_events():
     )
     items = [it for it in items if it.get("timestamp") != STATE_SORT_KEY]
     items.sort(key=lambda x: str(x.get("timestamp", "")), reverse=True)
-    return _response(200, {"events": items[:50]})
+    return _response(200, {"events": items[:limit]})
 
 
 def _handle_get_alerts():
@@ -894,9 +906,11 @@ def lambda_handler(event, context):
     try:
         if method == "POST" and path.rstrip("/") == "/telemetry":
             return _handle_post_telemetry(event)
-        if method == "GET" and path.rstrip("/") in GET_ROUTES:
+        route = path.rstrip("/")
+        if method == "GET" and route in GET_ROUTES:
             try:
-                return GET_ROUTES[path.rstrip("/")]()
+                fn = GET_ROUTES[route]
+                return fn(event) if fn is _handle_get_events else fn()
             except DB_ERRORS:
                 # The dashboard tells "database down" apart from "API down" by this body.
                 return _response(503, {"error": "db_unavailable"})
