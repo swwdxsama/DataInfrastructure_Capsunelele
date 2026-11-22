@@ -1,0 +1,2 @@
+# False positive: browser localStorage key name ("STORAGE_KEY") in geocode.ts
+567f7d9630950c88b6bf8d94f131551d6c3203d1:src/web/QuakeMeUp/src/lib/geocode.ts:generic-api-key:16
